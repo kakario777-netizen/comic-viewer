@@ -71,7 +71,7 @@ fun FavoritesScreen(
         }
     } else {
         LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = 108.dp),
+            columns = GridCells.Fixed(LocalGridColumns.current),
             contentPadding = PaddingValues(16.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),

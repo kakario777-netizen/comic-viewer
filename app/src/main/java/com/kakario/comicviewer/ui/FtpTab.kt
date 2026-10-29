@@ -17,6 +17,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.kakario.comicviewer.data.FtpServer
 import com.kakario.comicviewer.ftp.FtpBrowser
+import com.kakario.comicviewer.model.FileEntry
 import com.kakario.comicviewer.model.UserFacingException
 import com.kakario.comicviewer.model.parentPath
 import com.kakario.comicviewer.thumb.ThumbOrigin
@@ -37,6 +38,7 @@ fun FtpTab(
     location: FtpLocation?,
     browser: FtpBrowser?,
     onLocationChange: (FtpLocation?) -> Unit,
+    onOpenArchive: (FileEntry) -> Unit,
     onSaveServer: (FtpServer) -> Unit,
     onDeleteServer: (FtpServer) -> Unit,
     isFavorite: (serverId: Long, path: String) -> Boolean,
@@ -70,6 +72,7 @@ fun FtpTab(
             else onLocationChange(location.copy(path = parentPath(path)))
         },
         onOpenDir = { onLocationChange(location.copy(path = it)) },
+        onOpenArchive = onOpenArchive,
         isFavorite = { isFavorite(serverId, it) },
         onToggleFavorite = { onToggleFavorite(serverId, it) },
     )

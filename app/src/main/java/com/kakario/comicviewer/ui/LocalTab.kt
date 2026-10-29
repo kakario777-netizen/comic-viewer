@@ -32,6 +32,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.kakario.comicviewer.local.LocalStorage
+import com.kakario.comicviewer.model.FileEntry
 import com.kakario.comicviewer.model.parentPath
 import com.kakario.comicviewer.thumb.ThumbOrigin
 
@@ -42,6 +43,7 @@ import com.kakario.comicviewer.thumb.ThumbOrigin
 fun LocalTab(
     path: String?,
     onPathChange: (String?) -> Unit,
+    onOpenArchive: (FileEntry) -> Unit,
     isFavorite: (String) -> Boolean,
     onToggleFavorite: (String) -> Unit,
 ) {
@@ -84,6 +86,7 @@ fun LocalTab(
             else onPathChange(parentPath(path))
         },
         onOpenDir = { onPathChange(it) },
+        onOpenArchive = onOpenArchive,
         isFavorite = isFavorite,
         onToggleFavorite = onToggleFavorite,
     )

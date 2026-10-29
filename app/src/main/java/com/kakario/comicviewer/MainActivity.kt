@@ -24,6 +24,10 @@ import com.kakario.comicviewer.data.SettingsStore
 import com.kakario.comicviewer.data.ThemeMode
 import com.kakario.comicviewer.thumb.ThumbnailLoader
 import com.kakario.comicviewer.ui.LocalThumbnails
+import com.kakario.comicviewer.ui.LocalGridColumns
+import com.kakario.comicviewer.ui.ViewerScreen
+import com.kakario.comicviewer.thumb.ThumbOrigin
+import com.kakario.comicviewer.model.FileEntry
 import com.kakario.comicviewer.ui.SettingsScreen
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -100,6 +104,8 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             var themeMode by remember { mutableStateOf(settingsStore.themeMode) }
+            var gridColumns by remember { mutableIntStateOf(settingsStore.gridColumns) }
+            var rightToLeft by remember { mutableStateOf(settingsStore.rightToLeft) }
             val dark = when (themeMode) {
                 ThemeMode.SYSTEM -> isSystemInDarkTheme()
                 ThemeMode.LIGHT -> false
@@ -117,8 +123,13 @@ class MainActivity : ComponentActivity() {
             }
 
             MaterialTheme(colorScheme = if (dark) DarkColors else LightColors) {
-              CompositionLocalProvider(LocalThumbnails provides thumbnails) {
+              CompositionLocalProvider(
+                LocalThumbnails provides thumbnails,
+                LocalGridColumns provides gridColumns,
+              ) {
                 var settingsOpen by remember { mutableStateOf(false) }
+                // 지금 보고 있는 만화책 (null이면 뷰어 닫힘)
+                var openBook by remember { mutableStateOf<Pair<ThumbOrigin, FileEntry>?>(null) }
                 val servers = remember { mutableStateListOf<FtpServer>().apply { addAll(serverStore.load()) } }
                 val favorites = remember { mutableStateListOf<Favorite>().apply { addAll(favoriteStore.load()) } }
                 var tab by remember { mutableIntStateOf(TAB_FAVORITES) }
@@ -160,10 +171,21 @@ class MainActivity : ComponentActivity() {
                                 themeMode = it
                                 settingsStore.themeMode = it
                             },
+                            gridColumns = gridColumns,
+                            onGridColumnsChange = {
+                                gridColumns = it
+                                settingsStore.gridColumns = it
+                            },
+                            rightToLeft = rightToLeft,
+                            onRightToLeftChange = {
+                                rightToLeft = it
+                                settingsStore.rightToLeft = it
+                            },
                             onClose = { settingsOpen = false },
                         )
                     }
                 } else {
+                Box(Modifier.fillMaxSize()) {
                 Scaffold(
                     containerColor = MaterialTheme.colorScheme.background,
                     topBar = {
@@ -231,6 +253,9 @@ class MainActivity : ComponentActivity() {
                                 location = ftpLocation,
                                 browser = ftpBrowser,
                                 onLocationChange = { ftpLocation = it },
+                                onOpenArchive = { entry ->
+                                    ftpLocation?.let { openBook = ThumbOrigin(it.server) to entry }
+                                },
                                 onSaveServer = { server ->
                                     val idx = servers.indexOfFirst { it.id == server.id }
                                     if (idx >= 0) servers[idx] = server else servers.add(server)
@@ -250,11 +275,22 @@ class MainActivity : ComponentActivity() {
                             TAB_LOCAL -> LocalTab(
                                 path = localPath,
                                 onPathChange = { localPath = it },
+                                onOpenArchive = { entry -> openBook = ThumbOrigin(null) to entry },
                                 isFavorite = { isFavorite(null, it) },
                                 onToggleFavorite = { toggleFavorite(null, it) },
                             )
                         }
                     }
+                }
+                // 만화 뷰어는 책장 위에 덮어서 띄운다 (닫으면 보던 책장 그대로)
+                openBook?.let { (origin, entry) ->
+                    ViewerScreen(
+                        origin = origin,
+                        entry = entry,
+                        rightToLeft = rightToLeft,
+                        onClose = { openBook = null },
+                    )
+                }
                 }
                 } // else (설정 화면이 아닐 때)
               }

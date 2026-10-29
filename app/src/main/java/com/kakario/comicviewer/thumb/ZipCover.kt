@@ -21,7 +21,7 @@ object ZipCover {
     private const val LOC_SIG = 0x04034b50L
 
     private const val MAX_CEN_SIZE = 8 * 1024 * 1024
-    private const val MAX_IMAGE_SIZE = 30 * 1024 * 1024
+    private const val MAX_IMAGE_SIZE = 60 * 1024 * 1024
 
     private val IMAGE_EXT = setOf("jpg", "jpeg", "png", "webp", "gif", "bmp")
 
@@ -41,7 +41,8 @@ object ZipCover {
         return extract(src, cover)
     }
 
-    fun pickCover(entries: List<Entry>): Entry? =
+    /** 만화 페이지로 쓸 이미지들을 이름순(숫자는 숫자로)으로. */
+    fun imagePages(entries: List<Entry>): List<Entry> =
         entries
             .filter { e ->
                 !e.name.endsWith("/") &&
@@ -50,7 +51,9 @@ object ZipCover {
                     e.name.substringAfterLast('.', "").lowercase() in IMAGE_EXT &&
                     (e.flags and 1) == 0 // 암호 걸린 항목 제외
             }
-            .minWithOrNull { a, b -> NaturalOrder.compare(a.name, b.name) }
+            .sortedWith { a, b -> NaturalOrder.compare(a.name, b.name) }
+
+    fun pickCover(entries: List<Entry>): Entry? = imagePages(entries).firstOrNull()
 
     fun listEntries(src: RangeSource): List<Entry>? {
         val size = src.size

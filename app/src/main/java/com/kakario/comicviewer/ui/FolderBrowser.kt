@@ -34,6 +34,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -72,6 +73,7 @@ fun FolderBrowser(
     load: suspend (String) -> List<FileEntry>,
     onUp: () -> Unit,
     onOpenDir: (String) -> Unit,
+    onOpenArchive: (FileEntry) -> Unit,
     isFavorite: (String) -> Boolean,
     onToggleFavorite: (path: String) -> Unit,
 ) {
@@ -144,7 +146,7 @@ fun FolderBrowser(
                             )
                         } else {
                             LazyVerticalGrid(
-                                columns = GridCells.Adaptive(minSize = 108.dp),
+                                columns = GridCells.Fixed(LocalGridColumns.current),
                                 contentPadding = PaddingValues(12.dp),
                                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                                 verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -158,7 +160,7 @@ fun FolderBrowser(
                                         onToggleFavorite = { toggle(entry.path) },
                                         onClick = {
                                             if (entry.isDirectory) onOpenDir(entry.path)
-                                            else toast("ZIP 보기는 다음 업데이트에서 열려요")
+                                            else onOpenArchive(entry)
                                         },
                                     )
                                 }
@@ -295,6 +297,9 @@ fun StarButton(on: Boolean, onClick: () -> Unit) {
 }
 
 val StarColor = Color(0xFFFFC94D)
+
+/** 책장에서 한 줄에 보여줄 표지 개수 (설정에서 바꿈). */
+val LocalGridColumns = compositionLocalOf { 3 }
 private val Badge = Color(0x99000000)
 
 @Composable
