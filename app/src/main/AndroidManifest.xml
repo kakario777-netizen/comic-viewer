@@ -21,7 +21,11 @@
         android:theme="@style/Theme.ComicViewer">
         <activity
             android:name=".MainActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|density|uiMode|fontScale|layoutDirection|colorMode"
+            android:resizeableActivity="true"
             android:exported="true">
+            <!-- 위 configChanges: 회전·폴더블 접기/펼치기·화면 크기 변경 때 화면을 다시 만들지 않고
+                 그대로 이어서 그린다 → 보던 폴더, 뷰어 페이지, FTP 연결이 유지된다. -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

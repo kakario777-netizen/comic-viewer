@@ -26,6 +26,7 @@ import com.kakario.comicviewer.thumb.ThumbnailLoader
 import com.kakario.comicviewer.ui.LocalThumbnails
 import com.kakario.comicviewer.ui.LocalGridColumns
 import com.kakario.comicviewer.ui.ViewerScreen
+import com.kakario.comicviewer.ui.ViewerPrefs
 import com.kakario.comicviewer.thumb.ThumbOrigin
 import com.kakario.comicviewer.model.FileEntry
 import com.kakario.comicviewer.ui.SettingsScreen
@@ -85,6 +86,19 @@ val LightColors = lightColorScheme(
     error = Color(0xFFC62828),
 )
 
+/** 뷰어에 열려 있는 책과, 같은 폴더의 책 목록(다음 권 찾기용). */
+data class OpenBook(
+    val origin: ThumbOrigin,
+    val entry: FileEntry,
+    val siblings: List<FileEntry>,
+) {
+    val next: FileEntry?
+        get() {
+            val i = siblings.indexOfFirst { it.path == entry.path }
+            return if (i >= 0) siblings.getOrNull(i + 1) else null
+        }
+}
+
 private val TABS = listOf("⭐ 즐겨찾기", "🗄️ FTP", "📱 내 폰")
 private const val TAB_FAVORITES = 0
 private const val TAB_FTP = 1
@@ -106,6 +120,7 @@ class MainActivity : ComponentActivity() {
             var themeMode by remember { mutableStateOf(settingsStore.themeMode) }
             var gridColumns by remember { mutableIntStateOf(settingsStore.gridColumns) }
             var rightToLeft by remember { mutableStateOf(settingsStore.rightToLeft) }
+            var pageLayout by remember { mutableStateOf(settingsStore.pageLayout) }
             val dark = when (themeMode) {
                 ThemeMode.SYSTEM -> isSystemInDarkTheme()
                 ThemeMode.LIGHT -> false
@@ -129,7 +144,7 @@ class MainActivity : ComponentActivity() {
               ) {
                 var settingsOpen by remember { mutableStateOf(false) }
                 // 지금 보고 있는 만화책 (null이면 뷰어 닫힘)
-                var openBook by remember { mutableStateOf<Pair<ThumbOrigin, FileEntry>?>(null) }
+                var openBook by remember { mutableStateOf<OpenBook?>(null) }
                 val servers = remember { mutableStateListOf<FtpServer>().apply { addAll(serverStore.load()) } }
                 val favorites = remember { mutableStateListOf<Favorite>().apply { addAll(favoriteStore.load()) } }
                 var tab by remember { mutableIntStateOf(TAB_FAVORITES) }
@@ -180,6 +195,11 @@ class MainActivity : ComponentActivity() {
                             onRightToLeftChange = {
                                 rightToLeft = it
                                 settingsStore.rightToLeft = it
+                            },
+                            pageLayout = pageLayout,
+                            onPageLayoutChange = {
+                                pageLayout = it
+                                settingsStore.pageLayout = it
                             },
                             onClose = { settingsOpen = false },
                         )
@@ -253,8 +273,8 @@ class MainActivity : ComponentActivity() {
                                 location = ftpLocation,
                                 browser = ftpBrowser,
                                 onLocationChange = { ftpLocation = it },
-                                onOpenArchive = { entry ->
-                                    ftpLocation?.let { openBook = ThumbOrigin(it.server) to entry }
+                                onOpenArchive = { entry, siblings ->
+                                    ftpLocation?.let { openBook = OpenBook(ThumbOrigin(it.server), entry, siblings) }
                                 },
                                 onSaveServer = { server ->
                                     val idx = servers.indexOfFirst { it.id == server.id }
@@ -275,7 +295,7 @@ class MainActivity : ComponentActivity() {
                             TAB_LOCAL -> LocalTab(
                                 path = localPath,
                                 onPathChange = { localPath = it },
-                                onOpenArchive = { entry -> openBook = ThumbOrigin(null) to entry },
+                                onOpenArchive = { entry, siblings -> openBook = OpenBook(ThumbOrigin(null), entry, siblings) },
                                 isFavorite = { isFavorite(null, it) },
                                 onToggleFavorite = { toggleFavorite(null, it) },
                             )
@@ -283,11 +303,19 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 // 만화 뷰어는 책장 위에 덮어서 띄운다 (닫으면 보던 책장 그대로)
-                openBook?.let { (origin, entry) ->
+                openBook?.let { book ->
                     ViewerScreen(
-                        origin = origin,
-                        entry = entry,
-                        rightToLeft = rightToLeft,
+                        origin = book.origin,
+                        entry = book.entry,
+                        nextEntry = book.next,
+                        prefs = ViewerPrefs(pageLayout, rightToLeft),
+                        onPrefsChange = { p ->
+                            pageLayout = p.pageLayout
+                            settingsStore.pageLayout = p.pageLayout
+                            rightToLeft = p.rightToLeft
+                            settingsStore.rightToLeft = p.rightToLeft
+                        },
+                        onOpenNext = { next -> openBook = book.copy(entry = next) },
                         onClose = { openBook = null },
                     )
                 }

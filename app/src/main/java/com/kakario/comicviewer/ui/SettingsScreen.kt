@@ -37,6 +37,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.kakario.comicviewer.data.PageLayout
 import com.kakario.comicviewer.data.ThemeMode
 import kotlin.math.roundToInt
 
@@ -48,6 +49,8 @@ fun SettingsScreen(
     onGridColumnsChange: (Int) -> Unit,
     rightToLeft: Boolean,
     onRightToLeftChange: (Boolean) -> Unit,
+    pageLayout: PageLayout,
+    onPageLayoutChange: (PageLayout) -> Unit,
     onClose: () -> Unit,
 ) {
     BackHandler(onBack = onClose)
@@ -110,12 +113,26 @@ fun SettingsScreen(
 
             Divider()
 
+            // ── 보기 방식
+            SectionTitle("만화 보기 방식")
+            PageLayout.entries.forEach { layout ->
+                RadioRow(layout.label, selected = layout == pageLayout) { onPageLayoutChange(layout) }
+            }
+            Text(
+                "두 장 보기는 표지를 한 장으로 보여준 뒤 2장씩 펼쳐요",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
+            )
+
+            Divider()
+
             // ── 넘기는 방향
             SectionTitle("만화 넘기는 방향")
             RadioRow("왼쪽 → 오른쪽 (한국·서양 만화)", selected = !rightToLeft) { onRightToLeftChange(false) }
             RadioRow("오른쪽 → 왼쪽 (일본 만화)", selected = rightToLeft) { onRightToLeftChange(true) }
             Text(
-                "보는 중에는 화면 왼쪽·오른쪽을 눌러 넘기고, 가운데를 누르면 페이지 이동 막대가 나와요",
+                "보는 중에 화면 가운데를 누르면 페이지 이동 막대와 한 장/두 장 전환, 넘김 방향 버튼이 나와요",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),

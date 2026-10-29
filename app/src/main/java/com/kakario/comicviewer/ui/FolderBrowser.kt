@@ -46,9 +46,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.kakario.comicviewer.data.ProgressStore
 import com.kakario.comicviewer.model.FileEntry
 import com.kakario.comicviewer.model.UserFacingException
 import com.kakario.comicviewer.thumb.ThumbOrigin
@@ -73,7 +75,8 @@ fun FolderBrowser(
     load: suspend (String) -> List<FileEntry>,
     onUp: () -> Unit,
     onOpenDir: (String) -> Unit,
-    onOpenArchive: (FileEntry) -> Unit,
+    /** ZIP을 열 때: 누른 책과, 같은 폴더의 책 목록(다음 권 찾기용). */
+    onOpenArchive: (entry: FileEntry, siblings: List<FileEntry>) -> Unit,
     isFavorite: (String) -> Boolean,
     onToggleFavorite: (path: String) -> Unit,
 ) {
@@ -160,7 +163,7 @@ fun FolderBrowser(
                                         onToggleFavorite = { toggle(entry.path) },
                                         onClick = {
                                             if (entry.isDirectory) onOpenDir(entry.path)
-                                            else onOpenArchive(entry)
+                                            else onOpenArchive(entry, visible.filter { it.isComicArchive })
                                         },
                                     )
                                 }
@@ -197,6 +200,9 @@ private fun ShelfTile(
                     .aspectRatio(0.7f)
                     .clip(RoundedCornerShape(8.dp)),
             )
+            if (entry.isComicArchive) {
+                ReadBadge(origin, entry, Modifier.align(Alignment.BottomCenter))
+            }
             if (entry.isDirectory) {
                 Text(
                     "📁",
@@ -234,6 +240,44 @@ private fun ShelfTile(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(horizontal = 2.dp),
         )
+    }
+}
+
+/** 표지 아래쪽: 읽은 만큼 빨간 막대, 다 읽었으면 '다 읽음' 표시. */
+@Composable
+private fun ReadBadge(origin: ThumbOrigin, entry: FileEntry, modifier: Modifier) {
+    val context = LocalContext.current
+    val store = remember { ProgressStore.get(context) }
+    val version = store.version // 뷰어를 닫으면 바뀌어서 다시 그린다
+    val p = remember(version, entry.path, entry.size) { store.get(store.keyFor(origin, entry)) }
+    if (!p.started) return
+    Box(modifier.fillMaxWidth()) {
+        if (p.finished) {
+            Text(
+                "✓ 다 읽음",
+                color = Color.White,
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(6.dp)
+                    .background(Color(0xCC2E7D32), RoundedCornerShape(6.dp))
+                    .padding(horizontal = 5.dp, vertical = 1.dp),
+            )
+        } else {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(4.dp)
+                    .background(Color(0x66000000))
+            ) {
+                Box(
+                    Modifier
+                        .fillMaxWidth(p.fraction)
+                        .height(4.dp)
+                        .background(MaterialTheme.colorScheme.primary)
+                )
+            }
+        }
     }
 }
 

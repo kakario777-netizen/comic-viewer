@@ -9,6 +9,13 @@ enum class ThemeMode(val label: String) {
     DARK("어둡게 (검은색)"),
 }
 
+/** 뷰어에서 한 화면에 보여줄 페이지 수. */
+enum class PageLayout(val label: String, val short: String) {
+    SINGLE("한 장씩 보기", "한 장"),
+    DOUBLE("두 장씩 보기 (책처럼 펼쳐서)", "두 장"),
+    AUTO("자동 (가로 화면·펼친 폴더블이면 두 장)", "자동"),
+}
+
 class SettingsStore(context: Context) {
     private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
@@ -32,5 +39,13 @@ class SettingsStore(context: Context) {
         get() = prefs.getBoolean("rtl", false)
         set(value) {
             prefs.edit().putBoolean("rtl", value).apply()
+        }
+
+    var pageLayout: PageLayout
+        get() = prefs.getString("page_layout", null)
+            ?.let { name -> PageLayout.entries.firstOrNull { it.name == name } }
+            ?: PageLayout.AUTO
+        set(value) {
+            prefs.edit().putString("page_layout", value.name).apply()
         }
 }

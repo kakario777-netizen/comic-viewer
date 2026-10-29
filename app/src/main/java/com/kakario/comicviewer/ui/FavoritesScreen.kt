@@ -90,7 +90,7 @@ fun FavoritesScreen(
                 FavoriteTile(
                     origin = ThumbOrigin(server),
                     entry = FileEntry(fav.name, fav.path, isDirectory = true, size = 0),
-                    showCover = fav.isLocal || server != null,
+                    showCover = false, // 즐겨찾기 폴더는 표지 없이 폴더 아이콘으로
                     name = fav.name,
                     source = source,
                     onClick = { onOpen(fav) },
@@ -140,7 +140,14 @@ private fun FavoriteTile(
         if (showCover) {
             CoverImage(origin = origin, entry = entry, modifier = coverModifier)
         } else {
-            Box(coverModifier.background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(1f)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surface),
+                contentAlignment = Alignment.Center,
+            ) {
                 Text("📁", style = MaterialTheme.typography.displayMedium)
             }
         }

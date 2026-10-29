@@ -10,26 +10,32 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
@@ -37,6 +43,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
@@ -44,6 +51,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -53,6 +61,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -61,6 +70,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.style.TextAlign
@@ -70,6 +80,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import com.kakario.comicviewer.data.PageLayout
 import com.kakario.comicviewer.data.ProgressStore
 import com.kakario.comicviewer.model.FileEntry
 import com.kakario.comicviewer.model.UserFacingException
@@ -81,12 +92,21 @@ import kotlin.math.roundToInt
 
 private val OverlayBg = Color(0xCC000000)
 
+/** 뷰어에서 바꿀 수 있는 보기 설정 묶음 (설정 화면과 같은 값). */
+data class ViewerPrefs(
+    val pageLayout: PageLayout,
+    val rightToLeft: Boolean,
+)
+
 /** ZIP 만화 보기 화면 (전체화면). */
 @Composable
 fun ViewerScreen(
     origin: ThumbOrigin,
     entry: FileEntry,
-    rightToLeft: Boolean,
+    nextEntry: FileEntry?,
+    prefs: ViewerPrefs,
+    onPrefsChange: (ViewerPrefs) -> Unit,
+    onOpenNext: (FileEntry) -> Unit,
     onClose: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -94,11 +114,17 @@ fun ViewerScreen(
         val dm = context.resources.displayMetrics
         (maxOf(dm.widthPixels, dm.heightPixels) * 1.5f).roundToInt().coerceIn(1600, 3000)
     }
+    val progress = remember { ProgressStore.get(context) }
     val book = remember(origin, entry.path) { ComicBook(origin, entry, maxSide) }
-    DisposableEffect(book) { onDispose { book.close() } }
+    DisposableEffect(book) {
+        onDispose {
+            book.close()
+            progress.bump() // 책장 진행률 다시 그리기
+        }
+    }
 
-    var pageCount by remember { mutableStateOf<Int?>(null) }
-    var openError by remember { mutableStateOf<String?>(null) }
+    var pageCount by remember(book) { mutableStateOf<Int?>(null) }
+    var openError by remember(book) { mutableStateOf<String?>(null) }
     var retry by remember { mutableIntStateOf(0) }
     LaunchedEffect(book, retry) {
         openError = null
@@ -132,7 +158,7 @@ fun ViewerScreen(
                 Spacer(Modifier.height(16.dp))
                 Row {
                     Button(onClick = { retry++ }) { Text("다시 시도") }
-                    Spacer(Modifier.padding(8.dp))
+                    Spacer(Modifier.width(12.dp))
                     Button(onClick = onClose) { Text("닫기") }
                 }
             }
@@ -146,70 +172,161 @@ fun ViewerScreen(
                 Text(entry.name, color = Color.White.copy(alpha = 0.7f), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
 
-            else -> BookPager(origin, entry, book, n, rightToLeft, onClose)
+            // 다음 권으로 넘어가면 페이지 상태를 새로 시작하도록 책마다 따로 둔다
+            else -> key(entry.path) {
+              BookPager(
+                bookKey = progress.keyFor(origin, entry),
+                entry = entry,
+                book = book,
+                pageCount = n,
+                nextEntry = nextEntry,
+                prefs = prefs,
+                onPrefsChange = onPrefsChange,
+                onOpenNext = onOpenNext,
+                onClose = onClose,
+              )
+            }
         }
     }
 }
 
+/** 한 화면에 보여줄 페이지 묶음 만들기. 두 장 보기는 표지만 따로, 그다음부터 2장씩. */
+private fun buildSpreads(pageCount: Int, double: Boolean): List<List<Int>> {
+    if (!double) return (0 until pageCount).map { listOf(it) }
+    val result = mutableListOf(listOf(0))
+    var i = 1
+    while (i < pageCount) {
+        result += if (i + 1 < pageCount) listOf(i, i + 1) else listOf(i)
+        i += 2
+    }
+    return result
+}
+
 @Composable
 private fun BookPager(
-    origin: ThumbOrigin,
+    bookKey: String,
     entry: FileEntry,
     book: ComicBook,
     pageCount: Int,
-    rightToLeft: Boolean,
+    nextEntry: FileEntry?,
+    prefs: ViewerPrefs,
+    onPrefsChange: (ViewerPrefs) -> Unit,
+    onOpenNext: (FileEntry) -> Unit,
     onClose: () -> Unit,
 ) {
     val context = LocalContext.current
-    val progress = remember { ProgressStore(context) }
-    val bookKey = "${origin.tag}|${entry.path}|${entry.size}"
-    val startPage = remember { progress.get(bookKey).coerceIn(0, pageCount - 1) }
-    val pagerState = rememberPagerState(initialPage = startPage) { pageCount }
+    val progress = remember { ProgressStore.get(context) }
+    val configuration = LocalConfiguration.current
+    val landscape = configuration.screenWidthDp > configuration.screenHeightDp
+    val double = when (prefs.pageLayout) {
+        PageLayout.SINGLE -> false
+        PageLayout.DOUBLE -> true
+        PageLayout.AUTO -> landscape
+    }
+    val rtl = prefs.rightToLeft
+
+    // 지금 보고 있는 페이지 번호 — 한 장/두 장을 바꾸거나 화면을 돌려도 이 페이지를 유지한다.
+    var currentPage by remember {
+        mutableIntStateOf(progress.get(bookKey).page.coerceIn(0, pageCount - 1))
+    }
+    var overlay by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
-    var zoomed by remember { mutableStateOf(false) }
-    var overlay by remember { mutableStateOf(false) }
+    key(double) {
+        val spreads = remember(pageCount) { buildSpreads(pageCount, double) }
+        val endIndex = spreads.size // 마지막 장 다음의 '다 읽었어요' 화면
+        val pagerState = rememberPagerState(
+            initialPage = spreads.indexOfFirst { currentPage in it }.coerceAtLeast(0)
+        ) { spreads.size + 1 }
+        var zoomed by remember { mutableStateOf(false) }
 
-    // 현재 페이지 저장 + 앞으로 2장 미리 읽기
-    LaunchedEffect(pagerState.currentPage) {
-        val p = pagerState.currentPage
-        progress.set(bookKey, p)
-        book.prefetch(p + 1)
-        book.prefetch(p + 2)
-        book.prefetch(p - 1)
-        zoomed = false
-    }
-
-    fun goTo(page: Int) {
-        if (page !in 0 until pageCount) return
-        scope.launch { pagerState.animateScrollToPage(page) }
-    }
-
-    Box(Modifier.fillMaxSize()) {
-        HorizontalPager(
-            state = pagerState,
-            reverseLayout = rightToLeft,
-            userScrollEnabled = !zoomed,
-            beyondViewportPageCount = 1,
-            key = { it },
-            modifier = Modifier.fillMaxSize(),
-        ) { index ->
-            PageView(
-                book = book,
-                index = index,
-                onZoomChange = { if (index == pagerState.currentPage) zoomed = it },
-                onTap = { x, width ->
-                    when {
-                        x < width / 3f -> goTo(if (rightToLeft) pagerState.currentPage + 1 else pagerState.currentPage - 1)
-                        x > width * 2f / 3f -> goTo(if (rightToLeft) pagerState.currentPage - 1 else pagerState.currentPage + 1)
-                        else -> overlay = !overlay
-                    }
-                },
-            )
+        LaunchedEffect(pagerState.currentPage) {
+            val s = pagerState.currentPage
+            zoomed = false
+            if (s < spreads.size) {
+                currentPage = spreads[s].first()
+                progress.set(bookKey, spreads[s].last(), pageCount)
+                // 앞으로 한 화면, 뒤로 한 화면 미리 읽기
+                spreads.getOrNull(s + 1)?.forEach { book.prefetch(it) }
+                spreads.getOrNull(s + 2)?.forEach { book.prefetch(it) }
+                spreads.getOrNull(s - 1)?.forEach { book.prefetch(it) }
+            } else {
+                progress.set(bookKey, pageCount - 1, pageCount)
+            }
         }
 
+        fun goToSpread(index: Int) {
+            if (index !in 0..endIndex) return
+            scope.launch { pagerState.animateScrollToPage(index) }
+        }
+
+        Box(Modifier.fillMaxSize()) {
+            HorizontalPager(
+                state = pagerState,
+                reverseLayout = rtl,
+                userScrollEnabled = !zoomed,
+                beyondViewportPageCount = 1,
+                key = { it },
+                modifier = Modifier.fillMaxSize(),
+            ) { index ->
+                if (index == endIndex) {
+                    EndCard(
+                        entry = entry,
+                        nextEntry = nextEntry,
+                        onOpenNext = onOpenNext,
+                        onClose = onClose,
+                        onBack = { goToSpread(endIndex - 1) },
+                    )
+                } else {
+                    SpreadView(
+                        book = book,
+                        pages = spreads[index],
+                        rightToLeft = rtl,
+                        onZoomChange = { if (index == pagerState.currentPage) zoomed = it },
+                        onTap = { x, width ->
+                            val forward = pagerState.currentPage + 1
+                            val backward = pagerState.currentPage - 1
+                            when {
+                                x < width / 3f -> goToSpread(if (rtl) forward else backward)
+                                x > width * 2f / 3f -> goToSpread(if (rtl) backward else forward)
+                                else -> overlay = !overlay
+                            }
+                        },
+                    )
+                }
+            }
+
+            ViewerOverlay(
+                visible = overlay && pagerState.currentPage < endIndex,
+                title = entry.name,
+                spread = spreads.getOrNull(pagerState.currentPage) ?: listOf(pageCount - 1),
+                pageCount = pageCount,
+                prefs = prefs,
+                onPrefsChange = onPrefsChange,
+                onJump = { page ->
+                    scope.launch { pagerState.scrollToPage(spreads.indexOfFirst { page in it }.coerceAtLeast(0)) }
+                },
+                onClose = onClose,
+            )
+        }
+    }
+}
+
+/** 가운데를 탭하면 나오는 위·아래 메뉴. */
+@Composable
+private fun ViewerOverlay(
+    visible: Boolean,
+    title: String,
+    spread: List<Int>,
+    pageCount: Int,
+    prefs: ViewerPrefs,
+    onPrefsChange: (ViewerPrefs) -> Unit,
+    onJump: (page: Int) -> Unit,
+    onClose: () -> Unit,
+) {
+    Box(Modifier.fillMaxSize()) {
         AnimatedVisibility(
-            visible = overlay,
+            visible = visible,
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier.align(Alignment.TopCenter),
@@ -226,7 +343,7 @@ private fun BookPager(
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "닫기", tint = Color.White)
                 }
                 Text(
-                    entry.name,
+                    title,
                     color = Color.White,
                     style = MaterialTheme.typography.titleSmall,
                     maxLines = 1,
@@ -237,7 +354,7 @@ private fun BookPager(
         }
 
         AnimatedVisibility(
-            visible = overlay,
+            visible = visible,
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier.align(Alignment.BottomCenter),
@@ -247,17 +364,18 @@ private fun BookPager(
                     .fillMaxWidth()
                     .background(OverlayBg)
                     .windowInsetsPadding(WindowInsets.navigationBars)
-                    .padding(horizontal = 20.dp, vertical = 8.dp),
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 var dragging by remember { mutableStateOf<Float?>(null) }
-                val shown = dragging?.roundToInt() ?: (pagerState.currentPage + 1)
-                Text("$shown / $pageCount", color = Color.White, style = MaterialTheme.typography.titleMedium)
+                val label = dragging?.let { "${it.roundToInt()}" }
+                    ?: spread.joinToString("-") { "${it + 1}" }
+                Text("$label / $pageCount", color = Color.White, style = MaterialTheme.typography.titleMedium)
                 Slider(
-                    value = dragging ?: (pagerState.currentPage + 1).toFloat(),
+                    value = dragging ?: (spread.first() + 1).toFloat(),
                     onValueChange = { dragging = it },
                     onValueChangeFinished = {
-                        dragging?.let { v -> scope.launch { pagerState.scrollToPage(v.roundToInt() - 1) } }
+                        dragging?.let { onJump(it.roundToInt() - 1) }
                         dragging = null
                     },
                     valueRange = 1f..pageCount.coerceAtLeast(2).toFloat(),
@@ -265,38 +383,114 @@ private fun BookPager(
                         thumbColor = MaterialTheme.colorScheme.primary,
                         activeTrackColor = MaterialTheme.colorScheme.primary,
                     ),
-                    // 오른쪽→왼쪽으로 읽을 때는 슬라이더도 뒤집는다
-                    modifier = Modifier.graphicsLayer { scaleX = if (rightToLeft) -1f else 1f },
+                    // 오른쪽→왼쪽으로 읽을 때는 막대도 뒤집는다
+                    modifier = Modifier.graphicsLayer { scaleX = if (prefs.rightToLeft) -1f else 1f },
                 )
+
+                // 보기 방식: 한 장 / 두 장 / 자동
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    PageLayout.entries.forEach { layout ->
+                        Chip(
+                            text = layout.short,
+                            selected = prefs.pageLayout == layout,
+                            onClick = { onPrefsChange(prefs.copy(pageLayout = layout)) },
+                        )
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Chip(
+                        text = if (prefs.rightToLeft) "← 오른쪽부터" else "왼쪽부터 →",
+                        selected = false,
+                        onClick = { onPrefsChange(prefs.copy(rightToLeft = !prefs.rightToLeft)) },
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
             }
         }
     }
 }
 
-/** 페이지 한 장: 불러오기, 핀치/더블탭 확대, 탭 영역 넘기기. */
 @Composable
-private fun PageView(
+private fun Chip(text: String, selected: Boolean, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(50)
+    Text(
+        text,
+        color = if (selected) Color.White else Color.White.copy(alpha = 0.8f),
+        style = MaterialTheme.typography.labelLarge,
+        modifier = Modifier
+            .clip(shape)
+            .then(
+                if (selected) Modifier.background(MaterialTheme.colorScheme.primary, shape)
+                else Modifier.border(1.dp, Color.White.copy(alpha = 0.4f), shape)
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+    )
+}
+
+/** 마지막 장 다음 화면: 다음 권 열기 / 닫기. */
+@Composable
+private fun EndCard(
+    entry: FileEntry,
+    nextEntry: FileEntry?,
+    onOpenNext: (FileEntry) -> Unit,
+    onClose: () -> Unit,
+    onBack: () -> Unit,
+) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(
+            Modifier.padding(32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text("다 읽었어요 📖", color = Color.White, style = MaterialTheme.typography.headlineSmall)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                entry.name,
+                color = Color.White.copy(alpha = 0.6f),
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(Modifier.height(28.dp))
+            if (nextEntry != null) {
+                Text("다음 권", color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.labelLarge)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    nextEntry.name,
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                )
+                Spacer(Modifier.height(16.dp))
+                Button(onClick = { onOpenNext(nextEntry) }) { Text("다음 권 보기") }
+            } else {
+                Text("이 폴더의 마지막 권이에요", color = Color.White.copy(alpha = 0.8f))
+            }
+            Spacer(Modifier.height(12.dp))
+            Row {
+                OutlinedButton(onClick = onBack) { Text("마지막 장으로", color = Color.White) }
+                Spacer(Modifier.width(12.dp))
+                OutlinedButton(onClick = onClose) { Text("책장으로", color = Color.White) }
+            }
+        }
+    }
+}
+
+/** 한 화면(한 장 또는 두 장): 불러오기, 핀치/더블탭 확대, 탭 영역 넘기기. */
+@Composable
+private fun SpreadView(
     book: ComicBook,
-    index: Int,
+    pages: List<Int>,
+    rightToLeft: Boolean,
     onZoomChange: (Boolean) -> Unit,
     onTap: (x: Float, width: Float) -> Unit,
 ) {
-    var reload by remember { mutableIntStateOf(0) }
-    var error by remember { mutableStateOf<String?>(null) }
-    val bitmap by produceState<Bitmap?>(book.cached(index), index, reload) {
-        if (value != null) return@produceState
-        error = null
-        try {
-            value = book.page(index)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: UserFacingException) {
-            error = e.message
-        } catch (e: Exception) {
-            error = "페이지를 불러오지 못했어요: ${e.message ?: e.javaClass.simpleName}"
-        }
-    }
-
     var size by remember { mutableStateOf(IntSize.Zero) }
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
@@ -312,7 +506,7 @@ private fun PageView(
         Modifier
             .fillMaxSize()
             .onSizeChanged { size = it }
-            .pointerInput(index) {
+            .pointerInput(pages) {
                 detectTapGestures(
                     onTap = { pos -> if (scale <= 1f) onTap(pos.x, size.width.toFloat()) },
                     onDoubleTap = { pos ->
@@ -330,7 +524,7 @@ private fun PageView(
                     },
                 )
             }
-            .pointerInput(index) {
+            .pointerInput(pages) {
                 // 두 손가락이면 확대/축소, 확대된 상태면 한 손가락으로 이동.
                 // 확대 안 된 상태의 한 손가락 밀기는 건드리지 않아서 페이지 넘기기로 간다.
                 awaitEachGesture {
@@ -358,8 +552,49 @@ private fun PageView(
                     } while (event.changes.any { it.pressed })
                 }
             },
-        contentAlignment = Alignment.Center,
     ) {
+        Row(
+            Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                    translationX = offset.x
+                    translationY = offset.y
+                },
+        ) {
+            if (pages.size == 1) {
+                PageImage(book, pages[0], Alignment.Center, Modifier.weight(1f))
+            } else {
+                // 두 장: 왼→오로 읽으면 앞 페이지가 왼쪽, 오→왼이면 앞 페이지가 오른쪽.
+                // 가운데로 붙여서 펼친 책처럼 보이게 한다.
+                val (left, right) = if (rightToLeft) pages[1] to pages[0] else pages[0] to pages[1]
+                PageImage(book, left, Alignment.CenterEnd, Modifier.weight(1f))
+                PageImage(book, right, Alignment.CenterStart, Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+@Composable
+private fun PageImage(book: ComicBook, index: Int, alignment: Alignment, modifier: Modifier) {
+    var reload by remember { mutableIntStateOf(0) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val bitmap by produceState<Bitmap?>(book.cached(index), index, reload) {
+        if (value != null) return@produceState
+        error = null
+        try {
+            value = book.page(index)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: UserFacingException) {
+            error = e.message
+        } catch (e: Exception) {
+            error = "페이지를 불러오지 못했어요: ${e.message ?: e.javaClass.simpleName}"
+        }
+    }
+
+    Box(modifier.fillMaxHeight(), contentAlignment = Alignment.Center) {
         val b = bitmap
         val err = error
         when {
@@ -367,19 +602,13 @@ private fun PageView(
                 bitmap = b.asImageBitmap(),
                 contentDescription = null,
                 contentScale = ContentScale.Fit,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer {
-                        scaleX = scale
-                        scaleY = scale
-                        translationX = offset.x
-                        translationY = offset.y
-                    },
+                alignment = alignment,
+                modifier = Modifier.fillMaxSize(),
             )
 
             err != null -> Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.padding(32.dp),
+                modifier = Modifier.padding(24.dp),
             ) {
                 Text(err, color = Color.White, textAlign = TextAlign.Center)
                 Spacer(Modifier.height(12.dp))

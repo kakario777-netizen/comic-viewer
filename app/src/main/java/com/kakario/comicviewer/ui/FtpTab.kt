@@ -38,7 +38,7 @@ fun FtpTab(
     location: FtpLocation?,
     browser: FtpBrowser?,
     onLocationChange: (FtpLocation?) -> Unit,
-    onOpenArchive: (FileEntry) -> Unit,
+    onOpenArchive: (entry: FileEntry, siblings: List<FileEntry>) -> Unit,
     onSaveServer: (FtpServer) -> Unit,
     onDeleteServer: (FtpServer) -> Unit,
     isFavorite: (serverId: Long, path: String) -> Boolean,

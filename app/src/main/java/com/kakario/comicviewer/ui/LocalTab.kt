@@ -43,7 +43,7 @@ import com.kakario.comicviewer.thumb.ThumbOrigin
 fun LocalTab(
     path: String?,
     onPathChange: (String?) -> Unit,
-    onOpenArchive: (FileEntry) -> Unit,
+    onOpenArchive: (entry: FileEntry, siblings: List<FileEntry>) -> Unit,
     isFavorite: (String) -> Boolean,
     onToggleFavorite: (String) -> Unit,
 ) {
