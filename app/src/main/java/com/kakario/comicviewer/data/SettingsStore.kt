@@ -76,4 +76,11 @@ class SettingsStore(context: Context) {
         set(value) {
             prefs.edit().putInt("prefetch_pages", value.coerceIn(2, 12)).apply()
         }
+
+    /** 페이지 넘길 때 옆으로 미끄러지는 효과 (false면 효과 없이 바로 바뀜). */
+    var slideAnimation: Boolean
+        get() = prefs.getBoolean("slide_animation", true)
+        set(value) {
+            prefs.edit().putBoolean("slide_animation", value).apply()
+        }
 }

@@ -25,6 +25,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -112,6 +113,8 @@ data class ViewerPrefs(
     val connections: Int = 3,
     /** 미리 받아둘 페이지 수 */
     val prefetchPages: Int = 6,
+    /** 넘길 때 슬라이드 효과 (false면 효과 없이 바로) */
+    val slideAnimation: Boolean = true,
 )
 
 /** ZIP 만화 보기 화면 (전체화면). */
@@ -274,7 +277,10 @@ private fun BookPager(
 
         fun goToSpread(index: Int) {
             if (index !in 0..endIndex) return
-            scope.launch { pagerState.animateScrollToPage(index) }
+            scope.launch {
+                if (prefs.slideAnimation) pagerState.animateScrollToPage(index)
+                else pagerState.scrollToPage(index)
+            }
         }
 
         // 볼륨 버튼 / 페이지 터너
@@ -302,10 +308,33 @@ private fun BookPager(
             HorizontalPager(
                 state = pagerState,
                 reverseLayout = rtl,
-                userScrollEnabled = !zoomed,
+                // 효과 없음 모드: 손가락으로 끌어도 화면이 따라오지 않고, 놓는 순간 바로 바뀐다
+                userScrollEnabled = !zoomed && prefs.slideAnimation,
                 beyondViewportPageCount = 1,
                 key = { it },
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .then(
+                        if (prefs.slideAnimation || zoomed) Modifier
+                        else Modifier.pointerInput(rtl) {
+                            val threshold = 48.dp.toPx()
+                            var dx = 0f
+                            detectHorizontalDragGestures(
+                                onDragStart = { dx = 0f },
+                                onHorizontalDrag = { change, amount ->
+                                    dx += amount
+                                    change.consume()
+                                },
+                                onDragEnd = {
+                                    if (kotlin.math.abs(dx) > threshold) {
+                                        // 왼→오 읽기: 왼쪽으로 밀면 다음 장 / 오→왼 읽기: 오른쪽으로 밀면 다음 장
+                                        val next = if (rtl) dx > 0 else dx < 0
+                                        goToSpread(pagerState.currentPage + if (next) 1 else -1)
+                                    }
+                                },
+                            )
+                        }
+                    ),
             ) { index ->
                 if (index == endIndex) {
                     EndCard(

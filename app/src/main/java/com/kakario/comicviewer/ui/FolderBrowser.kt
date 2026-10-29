@@ -121,7 +121,7 @@ fun FolderBrowser(
     val loaded = (state as? LoadState.Loaded)?.entries
     DisposableEffect(thumbs, origin, path, loaded != null) {
         if (thumbs != null && loaded != null && loaded.any { it.isComicArchive }) {
-            thumbs.watchFolder(origin, path, folderName(path))
+            thumbs.watchFolder(origin, path, folderName(path), loaded.count { it.isComicArchive })
         }
         onDispose { thumbs?.unwatchFolder(origin, path) }
     }

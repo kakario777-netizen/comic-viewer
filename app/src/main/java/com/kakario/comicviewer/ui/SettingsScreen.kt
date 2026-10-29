@@ -131,6 +131,23 @@ fun SettingsScreen(
 
             Divider()
 
+            // ── 넘김 효과
+            SectionTitle("페이지 넘김 효과")
+            RadioRow("슬라이드 (옆으로 미끄러지며 넘김)", selected = viewerPrefs.slideAnimation) {
+                onViewerPrefsChange(viewerPrefs.copy(slideAnimation = true))
+            }
+            RadioRow("효과 없이 바로 넘김", selected = !viewerPrefs.slideAnimation) {
+                onViewerPrefsChange(viewerPrefs.copy(slideAnimation = false))
+            }
+            Text(
+                "효과 없이 넘기면 탭·밀기·볼륨 버튼 모두 화면이 바로 바뀌어요 (전자책처럼)",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
+            )
+
+            Divider()
+
             // ── 넘기는 방향
             SectionTitle("만화 넘기는 방향")
             RadioRow("왼쪽 → 오른쪽 (한국·서양 만화)", selected = !rightToLeft) { onRightToLeftChange(false) }

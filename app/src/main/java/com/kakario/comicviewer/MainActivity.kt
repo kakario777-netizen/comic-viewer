@@ -38,6 +38,8 @@ import com.kakario.comicviewer.thumb.ThumbnailLoader
 import com.kakario.comicviewer.ui.LocalThumbnails
 import com.kakario.comicviewer.ui.LocalGridColumns
 import com.kakario.comicviewer.ui.ViewerScreen
+import com.kakario.comicviewer.ui.ThumbStatusBar
+import com.kakario.comicviewer.ui.ThumbStatusPanel
 import com.kakario.comicviewer.ui.ViewerPrefs
 import com.kakario.comicviewer.thumb.ThumbOrigin
 import com.kakario.comicviewer.model.FileEntry
@@ -138,7 +140,8 @@ class MainActivity : ComponentActivity() {
             var volumeKeys by remember { mutableStateOf(settingsStore.volumeKeys) }
             var ftpConnections by remember { mutableIntStateOf(settingsStore.ftpConnections) }
             var prefetchPages by remember { mutableIntStateOf(settingsStore.prefetchPages) }
-            val viewerPrefs = ViewerPrefs(pageLayout, rightToLeft, showInfoBar, volumeKeys, ftpConnections, prefetchPages)
+            var slideAnimation by remember { mutableStateOf(settingsStore.slideAnimation) }
+            val viewerPrefs = ViewerPrefs(pageLayout, rightToLeft, showInfoBar, volumeKeys, ftpConnections, prefetchPages, slideAnimation)
             fun saveViewerPrefs(p: ViewerPrefs) {
                 pageLayout = p.pageLayout; settingsStore.pageLayout = p.pageLayout
                 rightToLeft = p.rightToLeft; settingsStore.rightToLeft = p.rightToLeft
@@ -146,6 +149,7 @@ class MainActivity : ComponentActivity() {
                 volumeKeys = p.volumeKeys; settingsStore.volumeKeys = p.volumeKeys
                 ftpConnections = p.connections; settingsStore.ftpConnections = p.connections
                 prefetchPages = p.prefetchPages; settingsStore.prefetchPages = p.prefetchPages
+                slideAnimation = p.slideAnimation; settingsStore.slideAnimation = p.slideAnimation
             }
             val dark = when (themeMode) {
                 ThemeMode.SYSTEM -> isSystemInDarkTheme()
@@ -236,6 +240,9 @@ class MainActivity : ComponentActivity() {
                     }
                 } else {
                 Box(Modifier.fillMaxSize()) {
+                val thumbStatus by thumbnails.status.collectAsState()
+                var statusPanelOpen by remember { mutableStateOf(false) }
+                LaunchedEffect(thumbStatus == null) { if (thumbStatus == null) statusPanelOpen = false }
                 Scaffold(
                     containerColor = MaterialTheme.colorScheme.background,
                     topBar = {
@@ -272,37 +279,12 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
                         }
-                        // 썸네일 갱신 중일 때만 보이는 표시 (끝나면 사라짐)
-                        val thumbStatus by thumbnails.status.collectAsState()
-                        AnimatedVisibility(visible = thumbStatus != null) {
-                            val st = thumbStatus
-                            Row(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                                    .padding(start = 16.dp, end = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(14.dp),
-                                    strokeWidth = 2.dp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                                Spacer(Modifier.width(10.dp))
-                                Text(
-                                    if (st == null) "" else buildString {
-                                        append("'${st.label}' 썸네일 갱신 중")
-                                        if (st.waiting > 0) append(" · 대기 ${st.waiting}개")
-                                    },
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f),
-                                )
-                                TextButton(onClick = { thumbnails.stopAll() }) { Text("중지") }
-                            }
-                        }
+                        // 썸네일 갱신 중일 때만 보이는 한 줄 (끝나면 사라짐). 누르면 상세 창
+                        ThumbStatusBar(
+                            status = thumbStatus,
+                            expanded = statusPanelOpen,
+                            onToggle = { statusPanelOpen = !statusPanelOpen },
+                        )
                       }
                     },
                 ) { padding ->
@@ -363,6 +345,18 @@ class MainActivity : ComponentActivity() {
                                 onToggleFavorite = { toggleFavorite(null, it) },
                             )
                         }
+                        // 썸네일 갱신 상세 창 — 책장 위로 반투명하게 내려온다
+                        ThumbStatusPanel(
+                            status = thumbStatus,
+                            expanded = statusPanelOpen,
+                            onDismiss = { statusPanelOpen = false },
+                            onRemoveWaiting = { thumbnails.removeWaiting(it) },
+                            onSkipCurrent = { thumbnails.skipCurrent() },
+                            onStopAll = {
+                                thumbnails.stopAll()
+                                statusPanelOpen = false
+                            },
+                        )
                     }
                 }
                 // 만화 뷰어는 책장 위에 덮어서 띄운다 (닫으면 보던 책장 그대로)

@@ -114,15 +114,30 @@ class ThumbnailLoader(context: Context) {
     //  · 길게 눌러 '썸네일 갱신하기'를 누른 폴더들은 줄을 서서 차례로 처리된다.
     //  · 이미 있는 표지는 건너뛰고, 없는 표지만 만든다.
 
-    private class Job(val origin: ThumbOrigin, val path: String, val label: String, val auto: Boolean)
+    private class Job(
+        val id: Long,
+        val origin: ThumbOrigin,
+        val path: String,
+        val label: String,
+        val auto: Boolean,
+    ) {
+        @Volatile var done: Int = 0
+        /** 폴더 안 ZIP 수. 아직 모르면 null. */
+        @Volatile var total: Int? = null
+        fun same(o: ThumbOrigin, p: String) = origin == o && path == p
+    }
 
-    /** 화면 상단에 보여줄 상태. null이면 아무 작업도 없음. */
-    data class Status(val label: String, val waiting: Int)
+    /** 화면에 보여줄 작업 하나: 폴더 이름, 처리한 수 / 전체 수. */
+    data class JobInfo(val id: Long, val label: String, val done: Int, val total: Int?, val auto: Boolean)
+
+    /** 화면 상단·상세 창에 보여줄 상태. null이면 아무 작업도 없음. */
+    data class Status(val current: JobInfo, val waiting: List<JobInfo>)
 
     private val _status = MutableStateFlow<Status?>(null)
     val status: StateFlow<Status?> = _status
 
     private val jobLock = Any()
+    private var nextId = 1L
     private var autoJob: Job? = null
     private val queue = ArrayDeque<Job>()
     private var running: Job? = null
@@ -133,13 +148,16 @@ class ThumbnailLoader(context: Context) {
         scope.launch { worker() }
     }
 
-    /** 지금 보고 있는 폴더 — 이전 폴더의 자동 갱신은 멈추고 이 폴더로 바꾼다. */
-    fun watchFolder(origin: ThumbOrigin, path: String, label: String) {
+    /**
+     * 지금 보고 있는 폴더 — 이전 폴더의 자동 갱신은 멈추고 이 폴더로 바꾼다.
+     * zipCount를 알면 넘겨서 '0/100'처럼 바로 보여준다.
+     */
+    fun watchFolder(origin: ThumbOrigin, path: String, label: String, zipCount: Int? = null) {
         synchronized(jobLock) {
             val r = running
-            if (r != null && r.auto && (r.path != path || r.origin != origin)) runningTask?.cancel()
-            if (r != null && r.auto && r.path == path && r.origin == origin) return
-            autoJob = Job(origin, path, label, auto = true)
+            if (r != null && r.auto && r.same(origin, path)) return
+            if (r != null && r.auto) runningTask?.cancel()
+            autoJob = Job(nextId++, origin, path, label, auto = true).also { it.total = zipCount }
             publishLocked()
         }
         wake.trySend(Unit)
@@ -148,24 +166,45 @@ class ThumbnailLoader(context: Context) {
     /** 폴더를 떠날 때 — 그 폴더의 자동 갱신을 멈춘다. */
     fun unwatchFolder(origin: ThumbOrigin, path: String) {
         synchronized(jobLock) {
-            if (autoJob?.let { it.path == path && it.origin == origin } == true) autoJob = null
+            if (autoJob?.same(origin, path) == true) autoJob = null
             val r = running
-            if (r != null && r.auto && r.path == path && r.origin == origin) runningTask?.cancel()
+            if (r != null && r.auto && r.same(origin, path)) runningTask?.cancel()
             publishLocked()
         }
     }
 
     /** 길게 눌러 요청한 폴더 갱신 — 줄 맨 뒤에 선다. 이미 줄에 있으면 false. */
     fun requestFolder(origin: ThumbOrigin, path: String, label: String): Boolean {
+        val job: Job
         synchronized(jobLock) {
             val r = running
-            if (r != null && !r.auto && r.path == path && r.origin == origin) return false
-            if (queue.any { it.path == path && it.origin == origin }) return false
-            queue.addLast(Job(origin, path, label, auto = false))
+            if (r != null && !r.auto && r.same(origin, path)) return false
+            if (queue.any { it.same(origin, path) }) return false
+            job = Job(nextId++, origin, path, label, auto = false)
+            queue.addLast(job)
             publishLocked()
+        }
+        // 대기 목록에 '0/100'처럼 보이도록 ZIP 수를 미리 세어둔다
+        scope.launch {
+            runCatching { job.total = list(origin, path).count { it.isComicArchive } }
+            synchronized(jobLock) { publishLocked() }
         }
         wake.trySend(Unit)
         return true
+    }
+
+    /** 대기 중인 작업 하나를 뺀다. */
+    fun removeWaiting(id: Long) {
+        synchronized(jobLock) {
+            if (autoJob?.id == id) autoJob = null
+            queue.removeAll { it.id == id }
+            publishLocked()
+        }
+    }
+
+    /** 지금 진행 중인 작업만 멈춘다 (다음 대기 작업으로 넘어감). */
+    fun skipCurrent() {
+        synchronized(jobLock) { runningTask?.cancel() }
     }
 
     /** 진행 중·대기 중인 갱신을 모두 멈춘다. */
@@ -178,10 +217,19 @@ class ThumbnailLoader(context: Context) {
         }
     }
 
+    private fun Job.info() = JobInfo(id, label, done, total, auto)
+
     private fun publishLocked() {
         val r = running
-        val waiting = queue.size + (if (autoJob != null && r != null) 1 else 0)
-        _status.value = r?.let { Status(it.label, waiting) }
+        if (r == null) {
+            _status.value = null
+            return
+        }
+        val waiting = buildList {
+            autoJob?.let { add(it.info()) }
+            queue.forEach { add(it.info()) }
+        }
+        _status.value = Status(r.info(), waiting)
     }
 
     private suspend fun worker() {
@@ -211,12 +259,18 @@ class ThumbnailLoader(context: Context) {
     private suspend fun process(job: Job) {
         try {
             val zips = list(job.origin, job.path).filter { it.isComicArchive }
+            job.total = zips.size
+            job.done = 0
+            synchronized(jobLock) { publishLocked() }
             for (e in zips) {
                 paused.first { !it } // 만화 보는 중엔 잠깐 쉼
                 val key = keyFor(job.origin, e)
-                if (memory.get(key) != null || fileFor(key).exists()) continue // 이미 있음
-                misses.remove(key) // 전에 실패했던 것도 다시 시도
-                load(job.origin, e)
+                if (memory.get(key) == null && !fileFor(key).exists()) { // 없는 표지만
+                    misses.remove(key) // 전에 실패했던 것도 다시 시도
+                    load(job.origin, e)
+                }
+                job.done++
+                synchronized(jobLock) { publishLocked() }
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
