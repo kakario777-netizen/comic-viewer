@@ -89,6 +89,7 @@ fun LocalTab(
         onOpenArchive = onOpenArchive,
         isFavorite = isFavorite,
         onToggleFavorite = onToggleFavorite,
+        delete = { LocalStorage.delete(it.path) },
     )
 }
 

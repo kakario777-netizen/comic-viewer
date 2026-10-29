@@ -65,6 +65,13 @@ object LocalStorage {
     fun isRoot(context: Context, path: String): Boolean =
         roots(context).any { it.path.trimEnd('/') == path.trimEnd('/') }
 
+    suspend fun delete(path: String) = withContext(Dispatchers.IO) {
+        val f = File(path)
+        if (!f.delete() && f.exists()) {
+            throw UserFacingException("삭제하지 못했어요.\n저장공간 접근 권한을 확인해 주세요.")
+        }
+    }
+
     suspend fun list(path: String): List<FileEntry> = withContext(Dispatchers.IO) {
         val dir = File(path)
         if (!dir.exists()) throw UserFacingException("폴더가 없어요: $path")

@@ -1,6 +1,10 @@
 package com.kakario.comicviewer.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -79,13 +83,22 @@ fun FolderBrowser(
     onOpenArchive: (entry: FileEntry, siblings: List<FileEntry>) -> Unit,
     isFavorite: (String) -> Boolean,
     onToggleFavorite: (path: String) -> Unit,
+    /** 파일 삭제 (길게 누르기 메뉴). */
+    delete: suspend (FileEntry) -> Unit,
 ) {
     var state by remember { mutableStateOf<LoadState>(LoadState.Loading) }
     var reloadKey by remember { mutableIntStateOf(0) }
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
+    val context = LocalContext.current
+    val progressStore = remember { ProgressStore.get(context) }
+    // 길게 누르기 메뉴 / 두 번 확인
+    var menuFor by remember { mutableStateOf<FileEntry?>(null) }
+    var confirm by remember { mutableStateOf<Confirm?>(null) }
+
     val currentLoad by rememberUpdatedState(load)
+    val currentDelete by rememberUpdatedState(delete)
     LaunchedEffect(path, reloadKey) {
         state = LoadState.Loading
         state = try {
@@ -165,6 +178,7 @@ fun FolderBrowser(
                                             if (entry.isDirectory) onOpenDir(entry.path)
                                             else onOpenArchive(entry, visible.filter { it.isComicArchive })
                                         },
+                                        onLongClick = { if (entry.isComicArchive) menuFor = entry },
                                     )
                                 }
                             }
@@ -175,8 +189,117 @@ fun FolderBrowser(
         }
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
     }
+
+    // ── 길게 누르기 메뉴
+    menuFor?.let { target ->
+        val started = remember(target, progressStore.version) {
+            progressStore.get(progressStore.keyFor(origin, target)).started
+        }
+        AlertDialog(
+            onDismissRequest = { menuFor = null },
+            title = { Text(target.name, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+            text = {
+                Column {
+                    MenuItem("📖  읽은 진행률 초기화", enabled = started) {
+                        menuFor = null
+                        confirm = Confirm(target, ConfirmAction.RESET, 1)
+                    }
+                    MenuItem("🗑️  파일 삭제", color = MaterialTheme.colorScheme.error) {
+                        menuFor = null
+                        confirm = Confirm(target, ConfirmAction.DELETE, 1)
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { menuFor = null }) { Text("닫기") } },
+        )
+    }
+
+    // ── 두 번 확인
+    confirm?.let { c ->
+        val isDelete = c.action == ConfirmAction.DELETE
+        val title = when {
+            isDelete && c.step == 1 -> "파일을 삭제할까요?"
+            isDelete -> "정말 삭제할까요?"
+            c.step == 1 -> "진행률을 초기화할까요?"
+            else -> "정말 초기화할까요?"
+        }
+        val body = when {
+            isDelete && c.step == 1 -> "'${c.entry.name}'\n파일을 ${if (origin.server != null) "서버" else "폰"}에서 지워요."
+            isDelete -> "삭제한 파일은 되돌릴 수 없어요."
+            c.step == 1 -> "'${c.entry.name}'\n읽은 위치 기록을 지우고 처음부터 보게 돼요."
+            else -> "읽던 페이지 기록이 사라져요."
+        }
+        AlertDialog(
+            onDismissRequest = { confirm = null },
+            title = { Text(title) },
+            text = { Text(body) },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (c.step == 1) {
+                        confirm = c.copy(step = 2)
+                        return@TextButton
+                    }
+                    confirm = null
+                    val key = progressStore.keyFor(origin, c.entry)
+                    if (isDelete) {
+                        scope.launch {
+                            try {
+                                currentDelete(c.entry)
+                                progressStore.clear(key)
+                                toast("삭제했어요")
+                                reloadKey++
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: UserFacingException) {
+                                toast(e.message ?: "삭제하지 못했어요")
+                            } catch (e: Exception) {
+                                toast("삭제하지 못했어요: ${e.message ?: e.javaClass.simpleName}")
+                            }
+                        }
+                    } else {
+                        progressStore.clear(key)
+                        toast("진행률을 초기화했어요")
+                    }
+                }) {
+                    Text(
+                        when {
+                            c.step == 1 -> "다음"
+                            isDelete -> "네, 삭제할게요"
+                            else -> "네, 초기화할게요"
+                        },
+                        color = if (c.step == 2) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                    )
+                }
+            },
+            dismissButton = { TextButton(onClick = { confirm = null }) { Text("취소") } },
+        )
+    }
 }
 
+private enum class ConfirmAction { DELETE, RESET }
+private data class Confirm(val entry: FileEntry, val action: ConfirmAction, val step: Int)
+
+@Composable
+private fun MenuItem(
+    text: String,
+    enabled: Boolean = true,
+    color: Color = MaterialTheme.colorScheme.onSurface,
+    onClick: () -> Unit,
+) {
+    Text(
+        text,
+        color = if (enabled) color else color.copy(alpha = 0.35f),
+        style = MaterialTheme.typography.bodyLarge,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 14.dp),
+    )
+}
+
+@OptIn(ExperimentalFoundationApi::class)
 /** 책장의 한 칸: 표지 + 이름. 폴더는 왼쪽 아래 📁 표시와 오른쪽 위 즐겨찾기 별. */
 @Composable
 private fun ShelfTile(
@@ -185,11 +308,12 @@ private fun ShelfTile(
     favorite: Boolean,
     onToggleFavorite: () -> Unit,
     onClick: () -> Unit,
+    onLongClick: () -> Unit,
 ) {
     Column(
         Modifier
             .clip(RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
     ) {
         Box {
             CoverImage(
@@ -246,8 +370,8 @@ private fun ShelfTile(
 /** 표지 아래쪽: 읽은 만큼 빨간 막대, 다 읽었으면 '다 읽음' 표시. */
 @Composable
 private fun ReadBadge(origin: ThumbOrigin, entry: FileEntry, modifier: Modifier) {
-    val context = LocalContext.current
-    val store = remember { ProgressStore.get(context) }
+    val ctx = LocalContext.current
+    val store = remember { ProgressStore.get(ctx) }
     val version = store.version // 뷰어를 닫으면 바뀌어서 다시 그린다
     val p = remember(version, entry.path, entry.size) { store.get(store.keyFor(origin, entry)) }
     if (!p.started) return
@@ -264,8 +388,19 @@ private fun ReadBadge(origin: ThumbOrigin, entry: FileEntry, modifier: Modifier)
                     .padding(horizontal = 5.dp, vertical = 1.dp),
             )
         } else {
+            Text(
+                "${p.percent}%",
+                color = Color.White,
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 6.dp, bottom = 10.dp)
+                    .background(Badge, RoundedCornerShape(6.dp))
+                    .padding(horizontal = 5.dp, vertical = 1.dp),
+            )
             Box(
                 Modifier
+                    .align(Alignment.BottomCenter)
                     .fillMaxWidth()
                     .height(4.dp)
                     .background(Color(0x66000000))

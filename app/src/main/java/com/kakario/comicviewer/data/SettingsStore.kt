@@ -48,4 +48,32 @@ class SettingsStore(context: Context) {
         set(value) {
             prefs.edit().putString("page_layout", value.name).apply()
         }
+
+    /** 보는 중 화면 아래에 시간·남은 페이지를 흐리게 표시. */
+    var showInfoBar: Boolean
+        get() = prefs.getBoolean("info_bar", true)
+        set(value) {
+            prefs.edit().putBoolean("info_bar", value).apply()
+        }
+
+    /** 볼륨 버튼으로 페이지 넘기기 (페이지 터너 키는 항상 동작). */
+    var volumeKeys: Boolean
+        get() = prefs.getBoolean("volume_keys", true)
+        set(value) {
+            prefs.edit().putBoolean("volume_keys", value).apply()
+        }
+
+    /** 만화 볼 때 FTP 동시 연결 수 (1~4). */
+    var ftpConnections: Int
+        get() = prefs.getInt("ftp_connections", 3).coerceIn(1, 4)
+        set(value) {
+            prefs.edit().putInt("ftp_connections", value.coerceIn(1, 4)).apply()
+        }
+
+    /** 미리 받아둘 페이지 수 (2~12). */
+    var prefetchPages: Int
+        get() = prefs.getInt("prefetch_pages", 6).coerceIn(2, 12)
+        set(value) {
+            prefs.edit().putInt("prefetch_pages", value.coerceIn(2, 12)).apply()
+        }
 }

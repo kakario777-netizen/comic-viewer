@@ -4,6 +4,14 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import android.graphics.Bitmap
+import android.text.format.DateFormat
+import android.view.KeyEvent
+import androidx.compose.runtime.rememberUpdatedState
+import com.kakario.comicviewer.viewer.PageKeys
+import kotlinx.coroutines.delay
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -96,6 +104,14 @@ private val OverlayBg = Color(0xCC000000)
 data class ViewerPrefs(
     val pageLayout: PageLayout,
     val rightToLeft: Boolean,
+    /** 화면 아래 시간·남은 페이지 표시 */
+    val showInfoBar: Boolean = true,
+    /** 볼륨 버튼으로 넘기기 */
+    val volumeKeys: Boolean = true,
+    /** FTP 동시 연결 수 */
+    val connections: Int = 3,
+    /** 미리 받아둘 페이지 수 */
+    val prefetchPages: Int = 6,
 )
 
 /** ZIP 만화 보기 화면 (전체화면). */
@@ -115,7 +131,7 @@ fun ViewerScreen(
         (maxOf(dm.widthPixels, dm.heightPixels) * 1.5f).roundToInt().coerceIn(1600, 3000)
     }
     val progress = remember { ProgressStore.get(context) }
-    val book = remember(origin, entry.path) { ComicBook(origin, entry, maxSide) }
+    val book = remember(origin, entry.path) { ComicBook(origin, entry, maxSide, prefs.connections) }
     DisposableEffect(book) {
         onDispose {
             book.close()
@@ -245,10 +261,11 @@ private fun BookPager(
             zoomed = false
             if (s < spreads.size) {
                 currentPage = spreads[s].first()
-                progress.set(bookKey, spreads[s].last(), pageCount)
-                // 앞으로 한 화면, 뒤로 한 화면 미리 읽기
-                spreads.getOrNull(s + 1)?.forEach { book.prefetch(it) }
-                spreads.getOrNull(s + 2)?.forEach { book.prefetch(it) }
+                val last = spreads[s].last()
+                progress.set(bookKey, last, pageCount)
+                // 바로 다음 화면은 그림까지 준비, 그 뒤 페이지들은 원본을 미리 받아둔다 (여러 연결로 동시에)
+                spreads.getOrNull(s + 1)?.forEach { book.prepare(it) }
+                for (i in last + 1..last + prefs.prefetchPages) book.prefetch(i)
                 spreads.getOrNull(s - 1)?.forEach { book.prefetch(it) }
             } else {
                 progress.set(bookKey, pageCount - 1, pageCount)
@@ -258,6 +275,27 @@ private fun BookPager(
         fun goToSpread(index: Int) {
             if (index !in 0..endIndex) return
             scope.launch { pagerState.animateScrollToPage(index) }
+        }
+
+        // 볼륨 버튼 / 페이지 터너
+        val goTo by rememberUpdatedState<(Int) -> Unit>({ goToSpread(it) })
+        val rtlNow by rememberUpdatedState(rtl)
+        val volumeNow by rememberUpdatedState(prefs.volumeKeys)
+        DisposableEffect(pagerState) {
+            val handler: (KeyEvent) -> Boolean = { e ->
+                val dir = PageKeys.direction(e.keyCode, rtlNow, volumeNow)
+                if (dir == 0) {
+                    false
+                } else {
+                    if (e.action == KeyEvent.ACTION_DOWN) {
+                        // 버튼 하나는 한 장씩 (꾹 누르고 있으면 계속 넘어감)
+                        goTo(pagerState.currentPage + dir)
+                    }
+                    true
+                }
+            }
+            PageKeys.handler = handler
+            onDispose { if (PageKeys.handler === handler) PageKeys.handler = null }
         }
 
         Box(Modifier.fillMaxSize()) {
@@ -294,6 +332,14 @@ private fun BookPager(
                         },
                     )
                 }
+            }
+
+            if (prefs.showInfoBar && !overlay && pagerState.currentPage < endIndex) {
+                InfoBar(
+                    lastShown = spreads[pagerState.currentPage].last(),
+                    pageCount = pageCount,
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                )
             }
 
             ViewerOverlay(
@@ -410,6 +456,39 @@ private fun ViewerOverlay(
                 Spacer(Modifier.height(4.dp))
             }
         }
+    }
+}
+
+/** 화면 아래 흐린 작은 글씨: 왼쪽 시간, 오른쪽 남은 페이지와 읽은 %. */
+@Composable
+private fun InfoBar(lastShown: Int, pageCount: Int, modifier: Modifier) {
+    val context = LocalContext.current
+    val format = remember {
+        SimpleDateFormat(if (DateFormat.is24HourFormat(context)) "HH:mm" else "a h:mm", Locale.KOREA)
+    }
+    val time by produceState(format.format(Date())) {
+        while (true) {
+            value = format.format(Date())
+            // 다음 '분'이 바뀌는 순간까지 기다렸다가 갱신
+            delay(60_000L - System.currentTimeMillis() % 60_000L)
+        }
+    }
+    val remaining = (pageCount - 1 - lastShown).coerceAtLeast(0)
+    val percent = ((lastShown + 1) * 100 / pageCount.coerceAtLeast(1)).coerceIn(0, 100)
+    val style = MaterialTheme.typography.labelSmall
+    val color = Color(0x99A0A0A0)
+    Row(
+        modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(time, color = color, style = style)
+        Text(
+            if (remaining == 0) "마지막 페이지 · $percent%" else "남은 ${remaining}쪽 · $percent%",
+            color = color,
+            style = style,
+        )
     }
 }
 

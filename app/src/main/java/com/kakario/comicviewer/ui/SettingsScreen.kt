@@ -23,6 +23,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -51,6 +53,8 @@ fun SettingsScreen(
     onRightToLeftChange: (Boolean) -> Unit,
     pageLayout: PageLayout,
     onPageLayoutChange: (PageLayout) -> Unit,
+    viewerPrefs: ViewerPrefs,
+    onViewerPrefsChange: (ViewerPrefs) -> Unit,
     onClose: () -> Unit,
 ) {
     BackHandler(onBack = onClose)
@@ -133,6 +137,46 @@ fun SettingsScreen(
             RadioRow("오른쪽 → 왼쪽 (일본 만화)", selected = rightToLeft) { onRightToLeftChange(true) }
             Text(
                 "보는 중에 화면 가운데를 누르면 페이지 이동 막대와 한 장/두 장 전환, 넘김 방향 버튼이 나와요",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
+            )
+
+            Divider()
+
+            // ── 보는 중 화면
+            SectionTitle("보는 중 화면")
+            SwitchRow(
+                title = "아래에 시간·남은 페이지 표시",
+                subtitle = "흐린 작은 글씨로 왼쪽에 시간, 오른쪽에 남은 쪽수와 %",
+                checked = viewerPrefs.showInfoBar,
+            ) { onViewerPrefsChange(viewerPrefs.copy(showInfoBar = it)) }
+            SwitchRow(
+                title = "볼륨 버튼으로 넘기기",
+                subtitle = "아래 버튼 = 다음 장, 위 버튼 = 이전 장. 블루투스 페이지 터너는 항상 동작해요",
+                checked = viewerPrefs.volumeKeys,
+            ) { onViewerPrefsChange(viewerPrefs.copy(volumeKeys = it)) }
+
+            Divider()
+
+            // ── FTP 속도
+            SectionTitle("FTP로 볼 때 속도")
+            StepSlider(
+                title = "동시 연결 수",
+                valueText = { "${it}개" },
+                value = viewerPrefs.connections,
+                range = 1..4,
+                hint = "늘리면 여러 페이지를 한꺼번에 받아 빨라져요. 서버가 접속을 거부하면 줄이세요",
+            ) { onViewerPrefsChange(viewerPrefs.copy(connections = it)) }
+            StepSlider(
+                title = "미리 받아둘 페이지",
+                valueText = { "${it}장" },
+                value = viewerPrefs.prefetchPages,
+                range = 2..12,
+                hint = "읽는 동안 앞 페이지를 뒤에서 받아둬요. 많을수록 데이터를 더 써요",
+            ) { onViewerPrefsChange(viewerPrefs.copy(prefetchPages = it)) }
+            Text(
+                "바꾼 값은 다음에 책을 열 때부터 적용돼요",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
@@ -231,6 +275,50 @@ private fun GridPreview(columns: Int) {
                     .background(MaterialTheme.colorScheme.surfaceVariant)
             )
         }
+    }
+}
+
+@Composable
+private fun SwitchRow(title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .toggleable(value = checked, onValueChange = onChange)
+            .padding(horizontal = 24.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Spacer(Modifier.width(12.dp))
+        Switch(checked = checked, onCheckedChange = null)
+    }
+}
+
+@Composable
+private fun StepSlider(
+    title: String,
+    valueText: (Int) -> String,
+    value: Int,
+    range: IntRange,
+    hint: String,
+    onChange: (Int) -> Unit,
+) {
+    var current by remember(value) { mutableFloatStateOf(value.toFloat()) }
+    Column(Modifier.padding(horizontal = 24.dp, vertical = 6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(title, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground, modifier = Modifier.weight(1f))
+            Text(valueText(current.roundToInt()), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.primary)
+        }
+        Slider(
+            value = current,
+            onValueChange = { current = it },
+            onValueChangeFinished = { onChange(current.roundToInt()) },
+            valueRange = range.first.toFloat()..range.last.toFloat(),
+            steps = (range.last - range.first - 1).coerceAtLeast(0),
+        )
+        Text(hint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 

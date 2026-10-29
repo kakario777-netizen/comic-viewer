@@ -110,6 +110,16 @@ class FtpBrowser(private val server: FtpServer) {
         return if (read < length) buf.copyOf(read) else buf
     }
 
+    /** 서버에서 파일 하나를 지운다. */
+    suspend fun delete(path: String) = ftp {
+        ensureConnected()
+        if (!client.deleteFile(path)) {
+            throw UserFacingException(
+                "삭제하지 못했어요 (응답 ${client.replyCode}).\nFTP 계정에 지우기 권한이 있는지 확인해 주세요."
+            )
+        }
+    }
+
     suspend fun close() {
         withContext(Dispatchers.IO) {
             mutex.withLock {

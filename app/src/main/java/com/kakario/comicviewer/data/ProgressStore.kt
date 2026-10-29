@@ -12,6 +12,7 @@ data class ReadProgress(val page: Int, val total: Int) {
     val started: Boolean get() = total > 0
     val finished: Boolean get() = total > 0 && page >= total - 1
     val fraction: Float get() = if (total > 0) (page + 1f) / total else 0f
+    val percent: Int get() = (fraction * 100).toInt().coerceIn(0, 100)
 }
 
 /**
@@ -33,6 +34,11 @@ class ProgressStore private constructor(context: Context) {
 
     fun set(key: String, page: Int, total: Int) {
         prefs.edit().putInt(key, page).putInt("$key#total", total).apply()
+    }
+
+    fun clear(key: String) {
+        prefs.edit().remove(key).remove("$key#total").apply()
+        version++
     }
 
     fun bump() {

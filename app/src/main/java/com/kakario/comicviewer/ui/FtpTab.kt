@@ -75,6 +75,7 @@ fun FtpTab(
         onOpenArchive = onOpenArchive,
         isFavorite = { isFavorite(serverId, it) },
         onToggleFavorite = { onToggleFavorite(serverId, it) },
+        delete = { browser.delete(it.path) },
     )
 }
 

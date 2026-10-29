@@ -1,6 +1,8 @@
 package com.kakario.comicviewer
 
 import android.os.Bundle
+import android.view.KeyEvent
+import com.kakario.comicviewer.viewer.PageKeys
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.SystemBarStyle
@@ -121,6 +123,19 @@ class MainActivity : ComponentActivity() {
             var gridColumns by remember { mutableIntStateOf(settingsStore.gridColumns) }
             var rightToLeft by remember { mutableStateOf(settingsStore.rightToLeft) }
             var pageLayout by remember { mutableStateOf(settingsStore.pageLayout) }
+            var showInfoBar by remember { mutableStateOf(settingsStore.showInfoBar) }
+            var volumeKeys by remember { mutableStateOf(settingsStore.volumeKeys) }
+            var ftpConnections by remember { mutableIntStateOf(settingsStore.ftpConnections) }
+            var prefetchPages by remember { mutableIntStateOf(settingsStore.prefetchPages) }
+            val viewerPrefs = ViewerPrefs(pageLayout, rightToLeft, showInfoBar, volumeKeys, ftpConnections, prefetchPages)
+            fun saveViewerPrefs(p: ViewerPrefs) {
+                pageLayout = p.pageLayout; settingsStore.pageLayout = p.pageLayout
+                rightToLeft = p.rightToLeft; settingsStore.rightToLeft = p.rightToLeft
+                showInfoBar = p.showInfoBar; settingsStore.showInfoBar = p.showInfoBar
+                volumeKeys = p.volumeKeys; settingsStore.volumeKeys = p.volumeKeys
+                ftpConnections = p.connections; settingsStore.ftpConnections = p.connections
+                prefetchPages = p.prefetchPages; settingsStore.prefetchPages = p.prefetchPages
+            }
             val dark = when (themeMode) {
                 ThemeMode.SYSTEM -> isSystemInDarkTheme()
                 ThemeMode.LIGHT -> false
@@ -201,6 +216,8 @@ class MainActivity : ComponentActivity() {
                                 pageLayout = it
                                 settingsStore.pageLayout = it
                             },
+                            viewerPrefs = viewerPrefs,
+                            onViewerPrefsChange = { saveViewerPrefs(it) },
                             onClose = { settingsOpen = false },
                         )
                     }
@@ -308,13 +325,8 @@ class MainActivity : ComponentActivity() {
                         origin = book.origin,
                         entry = book.entry,
                         nextEntry = book.next,
-                        prefs = ViewerPrefs(pageLayout, rightToLeft),
-                        onPrefsChange = { p ->
-                            pageLayout = p.pageLayout
-                            settingsStore.pageLayout = p.pageLayout
-                            rightToLeft = p.rightToLeft
-                            settingsStore.rightToLeft = p.rightToLeft
-                        },
+                        prefs = viewerPrefs,
+                        onPrefsChange = { saveViewerPrefs(it) },
                         onOpenNext = { next -> openBook = book.copy(entry = next) },
                         onClose = { openBook = null },
                     )
@@ -324,6 +336,13 @@ class MainActivity : ComponentActivity() {
               }
             }
         }
+    }
+
+    /** 뷰어가 열려 있으면 볼륨 버튼·페이지 터너 입력을 먼저 페이지 넘기기에 쓴다. */
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val handler = PageKeys.handler
+        if (handler != null && handler(event)) return true
+        return super.dispatchKeyEvent(event)
     }
 
     override fun onDestroy() {
