@@ -42,7 +42,7 @@ data class ThumbOrigin(val server: FtpServer?) {
  * - 같은 표지를 화면과 '폴더 전체 미리 만들기'가 동시에 요청해도 한 번만 만든다.
  * - FTP는 화면 탐색·만화 보기와 부딪히지 않도록 서버마다 썸네일 전용 연결을 따로 쓴다.
  */
-class ThumbnailLoader(context: Context) {
+class ThumbnailLoader private constructor(context: Context) {
     private val dir = File(context.cacheDir, "thumbs").apply { mkdirs() }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -406,7 +406,15 @@ class ThumbnailLoader(context: Context) {
         }.start()
     }
 
-    private companion object {
-        const val TARGET_WIDTH = 360
+    companion object {
+        private const val TARGET_WIDTH = 360
+
+        @Volatile private var instance: ThumbnailLoader? = null
+
+        /** 앱 전체에서 하나만 쓴다 (화면과 백그라운드 서비스가 같은 작업 줄을 공유). */
+        fun get(context: Context): ThumbnailLoader =
+            instance ?: synchronized(this) {
+                instance ?: ThumbnailLoader(context.applicationContext).also { instance = it }
+            }
     }
 }

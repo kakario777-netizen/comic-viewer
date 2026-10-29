@@ -1,6 +1,10 @@
 package com.kakario.comicviewer
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import com.kakario.comicviewer.thumb.ThumbWorkService
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -129,7 +133,7 @@ class MainActivity : ComponentActivity() {
         val serverStore = ServerStore(applicationContext)
         val favoriteStore = FavoriteStore(applicationContext)
         val settingsStore = SettingsStore(applicationContext)
-        thumbnails = ThumbnailLoader(applicationContext)
+        thumbnails = ThumbnailLoader.get(applicationContext)
 
         setContent {
             var themeMode by remember { mutableStateOf(settingsStore.themeMode) }
@@ -242,7 +246,15 @@ class MainActivity : ComponentActivity() {
                 Box(Modifier.fillMaxSize()) {
                 val thumbStatus by thumbnails.status.collectAsState()
                 var statusPanelOpen by remember { mutableStateOf(false) }
-                LaunchedEffect(thumbStatus == null) { if (thumbStatus == null) statusPanelOpen = false }
+                LaunchedEffect(thumbStatus == null) {
+                    if (thumbStatus == null) {
+                        statusPanelOpen = false
+                    } else {
+                        // 갱신이 시작되면 백그라운드 서비스를 켠다 → 화면이 꺼져도 계속 진행
+                        askNotificationPermissionOnce()
+                        ThumbWorkService.start(applicationContext)
+                    }
+                }
                 Scaffold(
                     containerColor = MaterialTheme.colorScheme.background,
                     topBar = {
@@ -378,6 +390,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** 안드로이드 13+: 진행 알림을 보여주려면 알림 권한이 필요 (처음 한 번만 물어봄). */
+    private fun askNotificationPermissionOnce() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return
+        val prefs = getSharedPreferences("settings", MODE_PRIVATE)
+        if (prefs.getBoolean("asked_notification", false)) return
+        prefs.edit().putBoolean("asked_notification", true).apply()
+        requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1001)
+    }
+
     /** 뷰어가 열려 있으면 볼륨 버튼·페이지 터너 입력을 먼저 페이지 넘기기에 쓴다. */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         val handler = PageKeys.handler
@@ -387,6 +409,6 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        if (isFinishing) thumbnails.shutdown()
+        // 썸네일 갱신은 백그라운드 서비스가 이어서 하므로 연결을 닫지 않는다
     }
 }

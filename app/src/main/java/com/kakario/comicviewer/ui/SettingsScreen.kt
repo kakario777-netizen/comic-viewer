@@ -1,5 +1,11 @@
 package com.kakario.comicviewer.ui
 
+import android.content.Intent
+import android.net.Uri
+import android.os.PowerManager
+import android.provider.Settings
+import androidx.compose.runtime.mutableStateOf
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -201,6 +207,12 @@ fun SettingsScreen(
 
             Divider()
 
+            // ── 화면 꺼져도 갱신 계속
+            SectionTitle("화면이 꺼져도 썸네일 갱신 계속")
+            BatteryRow()
+
+            Divider()
+
             // ── 표지 썸네일
             SectionTitle("표지 썸네일")
             Row(
@@ -291,6 +303,49 @@ private fun GridPreview(columns: Int) {
                     .clip(RoundedCornerShape(4.dp))
                     .background(MaterialTheme.colorScheme.surfaceVariant)
             )
+        }
+    }
+}
+
+/** 배터리 최적화 예외 상태와 설정 버튼 (삼성 폰은 이게 꺼져 있으면 화면이 꺼질 때 앱을 재울 수 있음). */
+@Composable
+private fun BatteryRow() {
+    val context = LocalContext.current
+    val pm = remember { context.getSystemService(PowerManager::class.java) }
+    var exempt by remember { mutableStateOf(pm.isIgnoringBatteryOptimizations(context.packageName)) }
+    LifecycleResumeEffect(Unit) {
+        exempt = pm.isIgnoringBatteryOptimizations(context.packageName)
+        onPauseOrDispose { }
+    }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                if (exempt) "배터리 최적화 예외: 켜짐 ✓" else "배터리 최적화 예외: 꺼짐",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+            Text(
+                "갱신 중엔 알림창에 진행 상황이 떠요. 그래도 꺼지면 예외를 켜주세요",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (!exempt) {
+            OutlinedButton(onClick = {
+                runCatching {
+                    context.startActivity(
+                        Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                            .setData(Uri.parse("package:${context.packageName}"))
+                    )
+                }.onFailure {
+                    runCatching { context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
+                }
+            }) { Text("켜기") }
         }
     }
 }
