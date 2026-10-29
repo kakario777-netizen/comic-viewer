@@ -30,8 +30,12 @@ val LocalThumbnails = compositionLocalOf<ThumbnailLoader?> { null }
 fun CoverImage(origin: ThumbOrigin, entry: FileEntry, modifier: Modifier = Modifier) {
     val loader = LocalThumbnails.current
     val key = loader?.keyFor(origin, entry)
-    val bitmap by produceState<Bitmap?>(initialValue = key?.let { loader?.cached(it) }, key) {
-        if (loader != null && value == null) value = loader.load(origin, entry)
+    val generation = loader?.generation ?: 0
+    val bitmap by produceState<Bitmap?>(initialValue = key?.let { loader?.cached(it) }, key, generation) {
+        if (loader == null || key == null) return@produceState
+        // 다시 만들기 중엔 예전 표지를 그대로 보여주다가 새 표지가 나오면 바꾼다
+        val fresh = loader.cached(key) ?: loader.load(origin, entry)
+        if (fresh != null || loader.cached(key) == null) value = fresh
     }
 
     Box(

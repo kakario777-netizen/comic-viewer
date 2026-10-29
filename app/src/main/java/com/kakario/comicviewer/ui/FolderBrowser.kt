@@ -4,6 +4,9 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.runtime.produceState
 import androidx.compose.material3.TextButton
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -112,6 +115,21 @@ fun FolderBrowser(
         }
     }
 
+    // ── 폴더에 들어가면 안 보이는 칸까지 표지를 차례로 만들어둔다
+    val thumbs = LocalThumbnails.current
+    var preloadDone by remember { mutableIntStateOf(0) }
+    var preloadTotal by remember { mutableIntStateOf(0) }
+    var preloadKey by remember { mutableIntStateOf(0) }
+    val loaded = (state as? LoadState.Loaded)?.entries
+    LaunchedEffect(loaded, preloadKey) {
+        preloadTotal = 0
+        if (thumbs == null || loaded == null) return@LaunchedEffect
+        thumbs.preload(origin, loaded) { done, total ->
+            preloadDone = done
+            preloadTotal = total
+        }
+    }
+
     BackHandler(onBack = onUp)
 
     fun toast(msg: String) {
@@ -140,6 +158,27 @@ fun FolderBrowser(
                     }
                 },
             )
+
+            // 표지 만드는 중이면 얇은 막대와 개수 표시
+            if (preloadTotal > 0 && preloadDone < preloadTotal) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    LinearProgressIndicator(
+                        progress = { preloadDone.toFloat() / preloadTotal },
+                        modifier = Modifier.weight(1f).height(3.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "표지 $preloadDone/$preloadTotal",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
 
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 when (val s = state) {
@@ -178,7 +217,7 @@ fun FolderBrowser(
                                             if (entry.isDirectory) onOpenDir(entry.path)
                                             else onOpenArchive(entry, visible.filter { it.isComicArchive })
                                         },
-                                        onLongClick = { if (entry.isComicArchive) menuFor = entry },
+                                        onLongClick = { menuFor = entry },
                                     )
                                 }
                             }
@@ -200,13 +239,62 @@ fun FolderBrowser(
             title = { Text(target.name, maxLines = 2, overflow = TextOverflow.Ellipsis) },
             text = {
                 Column {
-                    MenuItem("📖  읽은 진행률 초기화", enabled = started) {
-                        menuFor = null
-                        confirm = Confirm(target, ConfirmAction.RESET, 1)
-                    }
-                    MenuItem("🗑️  파일 삭제", color = MaterialTheme.colorScheme.error) {
-                        menuFor = null
-                        confirm = Confirm(target, ConfirmAction.DELETE, 1)
+                    if (target.isComicArchive) {
+                        // 파일 정보: 용량과 이미지 수 (이미지 수는 ZIP 목차만 읽어서 알아냄)
+                        val count by produceState<String>("세는 중…", target) {
+                            value = try {
+                                thumbs?.pageCount(origin, target)?.let { "${it}장" } ?: "알 수 없음"
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                "알 수 없음"
+                            }
+                        }
+                        InfoLine("용량", formatBytes(target.size))
+                        InfoLine("이미지 수", count)
+                        val p = remember(target, progressStore.version) {
+                            progressStore.get(progressStore.keyFor(origin, target))
+                        }
+                        if (p.started) InfoLine("읽은 위치", "${p.page + 1} / ${p.total}쪽 (${p.percent}%)")
+                        Spacer(Modifier.height(8.dp))
+                        HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
+                        Spacer(Modifier.height(4.dp))
+                        MenuItem("🖼️  표지 다시 만들기") {
+                            menuFor = null
+                            thumbs?.invalidate(origin, listOf(target))
+                            toast("표지를 다시 만들어요")
+                        }
+                        MenuItem("📖  읽은 진행률 초기화", enabled = started) {
+                            menuFor = null
+                            confirm = Confirm(target, ConfirmAction.RESET, 1)
+                        }
+                        MenuItem("🗑️  파일 삭제", color = MaterialTheme.colorScheme.error) {
+                            menuFor = null
+                            confirm = Confirm(target, ConfirmAction.DELETE, 1)
+                        }
+                    } else {
+                        MenuItem("🖼️  안쪽 썸네일 다시 만들기") {
+                            menuFor = null
+                            scope.launch {
+                                toast("'${target.name}' 안쪽 표지를 다시 만들어요")
+                                try {
+                                    val inner = thumbs?.list(origin, target.path).orEmpty()
+                                    thumbs?.invalidate(origin, inner + target)
+                                    thumbs?.load(origin, target) // 이 폴더 자체 표지 먼저
+                                    thumbs?.preload(origin, inner) { _, _ -> }
+                                    toast("'${target.name}' 표지를 다시 만들었어요")
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    toast("다시 만들지 못했어요: ${e.message ?: e.javaClass.simpleName}")
+                                }
+                            }
+                        }
+                        val fav = isFavorite(target.path)
+                        MenuItem(if (fav) "☆  즐겨찾기에서 빼기" else "⭐  즐겨찾기에 추가") {
+                            menuFor = null
+                            toggle(target.path)
+                        }
                     }
                 }
             },
@@ -275,6 +363,21 @@ fun FolderBrowser(
             dismissButton = { TextButton(onClick = { confirm = null }) { Text("취소") } },
         )
     }
+}
+
+@Composable
+private fun InfoLine(label: String, value: String) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 3.dp)) {
+        Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(80.dp))
+        Text(value, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
+    }
+}
+
+private fun formatBytes(bytes: Long): String = when {
+    bytes >= 1L shl 30 -> String.format("%.2f GB", bytes / (1L shl 30).toDouble())
+    bytes >= 1L shl 20 -> String.format("%.1f MB", bytes / (1L shl 20).toDouble())
+    bytes >= 1L shl 10 -> String.format("%.0f KB", bytes / (1L shl 10).toDouble())
+    else -> "$bytes B"
 }
 
 private enum class ConfirmAction { DELETE, RESET }

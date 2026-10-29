@@ -42,6 +42,7 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -160,6 +161,8 @@ class MainActivity : ComponentActivity() {
                 var settingsOpen by remember { mutableStateOf(false) }
                 // 지금 보고 있는 만화책 (null이면 뷰어 닫힘)
                 var openBook by remember { mutableStateOf<OpenBook?>(null) }
+                // 만화를 보는 동안엔 폴더 표지 미리 만들기를 멈춰 보는 쪽에 속도를 양보
+                LaunchedEffect(openBook != null) { thumbnails.paused.value = openBook != null }
                 val servers = remember { mutableStateListOf<FtpServer>().apply { addAll(serverStore.load()) } }
                 val favorites = remember { mutableStateListOf<Favorite>().apply { addAll(favoriteStore.load()) } }
                 var tab by remember { mutableIntStateOf(TAB_FAVORITES) }
