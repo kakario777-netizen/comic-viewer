@@ -53,4 +53,7 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-core")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    // FTP 접속 라이브러리 (Apache Commons Net)
+    implementation("commons-net:commons-net:3.11.1")
 }
