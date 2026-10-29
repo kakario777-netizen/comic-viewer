@@ -35,6 +35,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.kakario.comicviewer.data.Favorite
 import com.kakario.comicviewer.data.FtpServer
+import com.kakario.comicviewer.model.FileEntry
+import com.kakario.comicviewer.thumb.ThumbOrigin
 
 @Composable
 fun FavoritesScreen(
@@ -69,7 +71,7 @@ fun FavoritesScreen(
         }
     } else {
         LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = 150.dp),
+            columns = GridCells.Adaptive(minSize = 108.dp),
             contentPadding = PaddingValues(16.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -83,12 +85,12 @@ fun FavoritesScreen(
                 )
             }
             items(favorites, key = { it.id }) { fav ->
-                val source = if (fav.isLocal) {
-                    "📱 내 폰"
-                } else {
-                    "🗄️ " + (servers.firstOrNull { it.id == fav.serverId }?.name ?: "알 수 없는 서버")
-                }
+                val server = servers.firstOrNull { it.id == fav.serverId }
+                val source = if (fav.isLocal) "📱 내 폰" else "🗄️ " + (server?.name ?: "알 수 없는 서버")
                 FavoriteTile(
+                    origin = ThumbOrigin(server),
+                    entry = FileEntry(fav.name, fav.path, isDirectory = true, size = 0),
+                    showCover = fav.isLocal || server != null,
                     name = fav.name,
                     source = source,
                     onClick = { onOpen(fav) },
@@ -117,6 +119,9 @@ fun FavoritesScreen(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun FavoriteTile(
+    origin: ThumbOrigin,
+    entry: FileEntry,
+    showCover: Boolean,
     name: String,
     source: String,
     onClick: () -> Unit,
@@ -127,16 +132,17 @@ private fun FavoriteTile(
             .clip(RoundedCornerShape(12.dp))
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
     ) {
-        // 나중에 이 자리에 첫 권 표지 썸네일이 들어간다.
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .aspectRatio(0.72f)
-                .clip(RoundedCornerShape(12.dp))
-                .background(MaterialTheme.colorScheme.surface),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text("📁", style = MaterialTheme.typography.displayMedium)
+        // 폴더 안 첫 권의 표지
+        val coverModifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(0.7f)
+            .clip(RoundedCornerShape(12.dp))
+        if (showCover) {
+            CoverImage(origin = origin, entry = entry, modifier = coverModifier)
+        } else {
+            Box(coverModifier.background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
+                Text("📁", style = MaterialTheme.typography.displayMedium)
+            }
         }
         Spacer(Modifier.height(8.dp))
         Text(

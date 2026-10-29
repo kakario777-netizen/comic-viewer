@@ -78,6 +78,7 @@ object LocalStorage {
                     path = f.absolutePath,
                     isDirectory = f.isDirectory,
                     size = if (f.isDirectory) 0 else f.length(),
+                    modified = f.lastModified(),
                 )
             }
             .sortedForShelf()

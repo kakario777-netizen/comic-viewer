@@ -3,6 +3,7 @@ package com.kakario.comicviewer.ftp
 import com.kakario.comicviewer.data.FtpServer
 import com.kakario.comicviewer.model.FileEntry
 import com.kakario.comicviewer.model.NaturalOrder
+import com.kakario.comicviewer.model.RangeSource
 import com.kakario.comicviewer.model.UserFacingException
 import com.kakario.comicviewer.model.joinPath
 import kotlinx.coroutines.Dispatchers
@@ -56,12 +57,57 @@ class FtpBrowser(private val server: FtpServer) {
                     path = joinPath(path, f.name),
                     isDirectory = f.isDirectory,
                     size = f.size,
+                    modified = f.timestamp?.timeInMillis ?: 0,
                 )
             }
             .sortedWith(
                 compareByDescending<FileEntry> { it.isDirectory }
                     .thenComparator { a, b -> NaturalOrder.compare(a.name, b.name) }
             )
+    }
+
+    /**
+     * 파일 하나를 RangeSource로 열어 block을 실행한다 (연결을 잡고 있는 동안만 유효).
+     * ZIP 전체를 받지 않고 필요한 부분(목차, 첫 이미지)만 읽을 때 쓴다.
+     */
+    suspend fun <T> useFile(path: String, fileSize: Long, block: (RangeSource) -> T): T = ftp {
+        ensureConnected()
+        block(object : RangeSource {
+            override val size: Long = fileSize
+            override fun read(offset: Long, length: Int): ByteArray = readRangeLocked(path, offset, length)
+        })
+    }
+
+    /** FTP 이어받기(REST)로 offset부터 length바이트만 받는다. 잠금을 잡은 상태에서만 호출. */
+    private fun readRangeLocked(path: String, offset: Long, length: Int): ByteArray {
+        ensureConnected()
+        client.setRestartOffset(offset)
+        val input = client.retrieveFileStream(path)
+            ?: throw UserFacingException("파일을 열 수 없어요 (응답 ${client.replyCode})")
+        val buf = ByteArray(length)
+        var read = 0
+        try {
+            while (read < length) {
+                val n = input.read(buf, read, length - read)
+                if (n < 0) break
+                read += n
+            }
+        } finally {
+            try {
+                input.close()
+            } catch (_: IOException) {
+            }
+        }
+        // 중간에 끊으면 서버가 426/226 같은 응답을 보낸다. 받아서 정리하고,
+        // NOOP 응답이 정확히 200이 아니면 응답 순서가 꼬인 것이므로 다시 접속한다.
+        try {
+            client.completePendingCommand()
+            if (client.noop() != 200) dropConnection()
+        } catch (_: IOException) {
+            dropConnection()
+        }
+        client.setRestartOffset(0)
+        return if (read < length) buf.copyOf(read) else buf
     }
 
     suspend fun close() {

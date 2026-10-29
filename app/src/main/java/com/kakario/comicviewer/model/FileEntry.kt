@@ -6,6 +6,8 @@ data class FileEntry(
     val path: String,
     val isDirectory: Boolean,
     val size: Long,
+    /** 수정 시각(밀리초). 모르면 0. 썸네일 캐시 구분용. */
+    val modified: Long = 0,
 ) {
     val isComicArchive: Boolean
         get() = !isDirectory && name.substringAfterLast('.', "").lowercase() in ARCHIVE_EXT
@@ -13,6 +15,12 @@ data class FileEntry(
     private companion object {
         val ARCHIVE_EXT = setOf("zip", "cbz")
     }
+}
+
+/** 파일의 원하는 위치만 골라 읽는 통로 (FTP 이어받기 / 로컬 임의 접근). */
+interface RangeSource {
+    val size: Long
+    fun read(offset: Long, length: Int): ByteArray
 }
 
 /** 사용자에게 그대로 보여줄 한국어 오류. */

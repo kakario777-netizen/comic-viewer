@@ -1,24 +1,31 @@
 package com.kakario.comicviewer.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -36,11 +43,14 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.kakario.comicviewer.model.FileEntry
 import com.kakario.comicviewer.model.UserFacingException
+import com.kakario.comicviewer.thumb.ThumbOrigin
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
@@ -51,13 +61,14 @@ private sealed interface LoadState {
 }
 
 /**
- * FTP와 내 폰이 함께 쓰는 폴더 탐색 화면.
+ * FTP와 내 폰이 함께 쓰는 책장(폴더 탐색) 화면.
  * 지금 보고 있는 폴더(path)는 바깥에서 관리해서, 탭을 옮겨 다녀도 위치가 유지된다.
  */
 @Composable
 fun FolderBrowser(
     title: String,
     path: String,
+    origin: ThumbOrigin,
     load: suspend (String) -> List<FileEntry>,
     onUp: () -> Unit,
     onOpenDir: (String) -> Unit,
@@ -85,6 +96,19 @@ fun FolderBrowser(
 
     BackHandler(onBack = onUp)
 
+    fun toast(msg: String) {
+        scope.launch {
+            snackbar.currentSnackbarData?.dismiss()
+            snackbar.showSnackbar(msg)
+        }
+    }
+
+    fun toggle(p: String) {
+        val wasOn = isFavorite(p)
+        onToggleFavorite(p)
+        toast(if (wasOn) "즐겨찾기에서 뺐어요" else "즐겨찾기에 추가했어요 — 첫 탭에서 바로 열 수 있어요")
+    }
+
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
             BrowserHeader(
@@ -92,19 +116,7 @@ fun FolderBrowser(
                 subtitle = path,
                 onBack = onUp,
                 actions = {
-                    StarButton(
-                        on = isFavorite(path),
-                        onClick = {
-                            val wasOn = isFavorite(path)
-                            onToggleFavorite(path)
-                            scope.launch {
-                                snackbar.currentSnackbarData?.dismiss()
-                                snackbar.showSnackbar(
-                                    if (wasOn) "즐겨찾기에서 뺐어요" else "즐겨찾기에 추가했어요 — 첫 탭에서 바로 열 수 있어요"
-                                )
-                            }
-                        },
-                    )
+                    StarButton(on = isFavorite(path), onClick = { toggle(path) })
                     IconButton(onClick = { reloadKey++ }) {
                         Icon(Icons.Filled.Refresh, contentDescription = "새로고침")
                     }
@@ -131,24 +143,24 @@ fun FolderBrowser(
                                 textAlign = TextAlign.Center,
                             )
                         } else {
-                            LazyColumn(Modifier.fillMaxSize()) {
+                            LazyVerticalGrid(
+                                columns = GridCells.Adaptive(minSize = 108.dp),
+                                contentPadding = PaddingValues(12.dp),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(14.dp),
+                                modifier = Modifier.fillMaxSize(),
+                            ) {
                                 items(visible, key = { it.path }) { entry ->
-                                    EntryRow(
+                                    ShelfTile(
+                                        origin = origin,
                                         entry = entry,
                                         favorite = entry.isDirectory && isFavorite(entry.path),
-                                        onToggleFavorite = { onToggleFavorite(entry.path) },
+                                        onToggleFavorite = { toggle(entry.path) },
                                         onClick = {
-                                            if (entry.isDirectory) {
-                                                onOpenDir(entry.path)
-                                            } else {
-                                                scope.launch {
-                                                    snackbar.currentSnackbarData?.dismiss()
-                                                    snackbar.showSnackbar("ZIP 보기는 다음 업데이트에서 열려요")
-                                                }
-                                            }
+                                            if (entry.isDirectory) onOpenDir(entry.path)
+                                            else toast("ZIP 보기는 다음 업데이트에서 열려요")
                                         },
                                     )
-                                    HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
                                 }
                             }
                         }
@@ -157,6 +169,69 @@ fun FolderBrowser(
             }
         }
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
+    }
+}
+
+/** 책장의 한 칸: 표지 + 이름. 폴더는 왼쪽 아래 📁 표시와 오른쪽 위 즐겨찾기 별. */
+@Composable
+private fun ShelfTile(
+    origin: ThumbOrigin,
+    entry: FileEntry,
+    favorite: Boolean,
+    onToggleFavorite: () -> Unit,
+    onClick: () -> Unit,
+) {
+    Column(
+        Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+    ) {
+        Box {
+            CoverImage(
+                origin = origin,
+                entry = entry,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(0.7f)
+                    .clip(RoundedCornerShape(8.dp)),
+            )
+            if (entry.isDirectory) {
+                Text(
+                    "📁",
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(6.dp)
+                        .background(Badge, RoundedCornerShape(6.dp))
+                        .padding(horizontal = 4.dp, vertical = 1.dp),
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                Box(
+                    Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(4.dp)
+                        .size(34.dp)
+                        .clip(CircleShape)
+                        .background(Badge)
+                        .clickable(onClick = onToggleFavorite),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        if (favorite) "★" else "☆",
+                        color = if (favorite) StarColor else Color.White,
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            entry.name,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onBackground,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 2.dp),
+        )
     }
 }
 
@@ -214,12 +289,13 @@ fun StarButton(on: Boolean, onClick: () -> Unit) {
         Text(
             if (on) "★" else "☆",
             style = MaterialTheme.typography.titleLarge,
-            color = if (on) Star else MaterialTheme.colorScheme.onSurfaceVariant,
+            color = if (on) StarColor else MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }
 
-private val Star = androidx.compose.ui.graphics.Color(0xFFFFC94D)
+val StarColor = Color(0xFFFFC94D)
+private val Badge = Color(0x99000000)
 
 @Composable
 fun ErrorView(message: String, onRetry: () -> Unit, modifier: Modifier = Modifier) {
@@ -233,50 +309,4 @@ fun ErrorView(message: String, onRetry: () -> Unit, modifier: Modifier = Modifie
         Spacer(Modifier.height(16.dp))
         Button(onClick = onRetry) { Text("다시 시도") }
     }
-}
-
-@Composable
-private fun EntryRow(
-    entry: FileEntry,
-    favorite: Boolean,
-    onToggleFavorite: () -> Unit,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(start = 16.dp, end = 4.dp, top = 6.dp, bottom = 6.dp)
-            .height(48.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(if (entry.isDirectory) "📁" else "📦", style = MaterialTheme.typography.titleLarge)
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Text(
-                entry.name,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onBackground,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (!entry.isDirectory) {
-                Text(
-                    formatSize(entry.size),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        if (entry.isDirectory) {
-            StarButton(on = favorite, onClick = onToggleFavorite)
-        }
-    }
-}
-
-private fun formatSize(bytes: Long): String = when {
-    bytes >= 1L shl 30 -> String.format("%.1f GB", bytes / (1L shl 30).toDouble())
-    bytes >= 1L shl 20 -> String.format("%.1f MB", bytes / (1L shl 20).toDouble())
-    bytes >= 1L shl 10 -> String.format("%.0f KB", bytes / (1L shl 10).toDouble())
-    else -> "$bytes B"
 }

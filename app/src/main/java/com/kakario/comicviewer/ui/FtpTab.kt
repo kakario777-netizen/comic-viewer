@@ -19,6 +19,7 @@ import com.kakario.comicviewer.data.FtpServer
 import com.kakario.comicviewer.ftp.FtpBrowser
 import com.kakario.comicviewer.model.UserFacingException
 import com.kakario.comicviewer.model.parentPath
+import com.kakario.comicviewer.thumb.ThumbOrigin
 import kotlinx.coroutines.CancellationException
 
 /** FTP 탭에서 지금 열려 있는 서버와 위치. */
@@ -61,6 +62,7 @@ fun FtpTab(
     FolderBrowser(
         title = location.server.name,
         path = path,
+        origin = ThumbOrigin(location.server),
         load = { browser.list(it) },
         onUp = {
             val atTop = path == location.root || path == "/"

@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.kakario.comicviewer.local.LocalStorage
 import com.kakario.comicviewer.model.parentPath
+import com.kakario.comicviewer.thumb.ThumbOrigin
 
 /**
  * 내 폰 탭. path가 null이면 저장공간(내장 메모리 / SD카드) 선택 화면.
@@ -76,6 +77,7 @@ fun LocalTab(
     FolderBrowser(
         title = "내 폰",
         path = path,
+        origin = ThumbOrigin(null),
         load = { LocalStorage.list(it) },
         onUp = {
             if (LocalStorage.isRoot(context, path)) onPathChange(null)

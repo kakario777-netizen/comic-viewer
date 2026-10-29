@@ -1,8 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.ComicViewer" parent="android:Theme.Material.NoActionBar">
-        <item name="android:statusBarColor">#FF14161A</item>
-        <item name="android:navigationBarColor">#FF14161A</item>
+    <!-- 앱이 뜨기 직전 잠깐 보이는 배경. 실제 테마는 앱 안 설정(시스템/밝게/어둡게)을 따른다. -->
+    <style name="Theme.ComicViewer" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">@color/background</item>
     </style>
 </resources>

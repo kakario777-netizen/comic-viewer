@@ -3,6 +3,28 @@ package com.kakario.comicviewer
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.SystemBarStyle
+import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.lightColorScheme
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.Alignment
+import com.kakario.comicviewer.data.SettingsStore
+import com.kakario.comicviewer.data.ThemeMode
+import com.kakario.comicviewer.thumb.ThumbnailLoader
+import com.kakario.comicviewer.ui.LocalThumbnails
+import com.kakario.comicviewer.ui.SettingsScreen
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -35,7 +57,7 @@ import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
 
-val AppColors = darkColorScheme(
+val DarkColors = darkColorScheme(
     primary = Color(0xFFE8505B),
     onPrimary = Color.White,
     background = Color(0xFF14161A),
@@ -47,20 +69,56 @@ val AppColors = darkColorScheme(
     error = Color(0xFFFF8A80),
 )
 
+val LightColors = lightColorScheme(
+    primary = Color(0xFFD93A46),
+    onPrimary = Color.White,
+    background = Color(0xFFF7F7F8),
+    surface = Color.White,
+    surfaceVariant = Color(0xFFE9EBEE),
+    onBackground = Color(0xFF1A1C1F),
+    onSurface = Color(0xFF1A1C1F),
+    onSurfaceVariant = Color(0xFF5F6368),
+    error = Color(0xFFC62828),
+)
+
 private val TABS = listOf("⭐ 즐겨찾기", "🗄️ FTP", "📱 내 폰")
 private const val TAB_FAVORITES = 0
 private const val TAB_FTP = 1
 private const val TAB_LOCAL = 2
 
 class MainActivity : ComponentActivity() {
+    private lateinit var thumbnails: ThumbnailLoader
+
     @OptIn(DelicateCoroutinesApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         val serverStore = ServerStore(applicationContext)
         val favoriteStore = FavoriteStore(applicationContext)
+        val settingsStore = SettingsStore(applicationContext)
+        thumbnails = ThumbnailLoader(applicationContext)
 
         setContent {
-            MaterialTheme(colorScheme = AppColors) {
+            var themeMode by remember { mutableStateOf(settingsStore.themeMode) }
+            val dark = when (themeMode) {
+                ThemeMode.SYSTEM -> isSystemInDarkTheme()
+                ThemeMode.LIGHT -> false
+                ThemeMode.DARK -> true
+            }
+            // 상태바·내비게이션바 아이콘 색도 테마에 맞춘다
+            DisposableEffect(dark) {
+                val style = if (dark) {
+                    SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+                } else {
+                    SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT)
+                }
+                enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
+                onDispose { }
+            }
+
+            MaterialTheme(colorScheme = if (dark) DarkColors else LightColors) {
+              CompositionLocalProvider(LocalThumbnails provides thumbnails) {
+                var settingsOpen by remember { mutableStateOf(false) }
                 val servers = remember { mutableStateListOf<FtpServer>().apply { addAll(serverStore.load()) } }
                 val favorites = remember { mutableStateListOf<Favorite>().apply { addAll(favoriteStore.load()) } }
                 var tab by remember { mutableIntStateOf(TAB_FAVORITES) }
@@ -89,20 +147,55 @@ class MainActivity : ComponentActivity() {
                     favoriteStore.save(favorites)
                 }
 
+                if (settingsOpen) {
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .background(MaterialTheme.colorScheme.background)
+                            .windowInsetsPadding(WindowInsets.systemBars)
+                    ) {
+                        SettingsScreen(
+                            themeMode = themeMode,
+                            onThemeChange = {
+                                themeMode = it
+                                settingsStore.themeMode = it
+                            },
+                            onClose = { settingsOpen = false },
+                        )
+                    }
+                } else {
                 Scaffold(
                     containerColor = MaterialTheme.colorScheme.background,
                     topBar = {
-                        TabRow(
-                            selectedTabIndex = tab,
-                            containerColor = MaterialTheme.colorScheme.background,
-                            contentColor = MaterialTheme.colorScheme.primary,
+                        // 상태바(시간·아이콘) 바로 아래에 탭 + 오른쪽 끝 설정 버튼
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.background)
+                                .windowInsetsPadding(WindowInsets.statusBars),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            TABS.forEachIndexed { i, label ->
-                                Tab(
-                                    selected = tab == i,
-                                    onClick = { tab = i },
-                                    text = { Text(label) },
-                                    unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            TabRow(
+                                selectedTabIndex = tab,
+                                modifier = Modifier.weight(1f),
+                                containerColor = MaterialTheme.colorScheme.background,
+                                contentColor = MaterialTheme.colorScheme.primary,
+                                divider = {},
+                            ) {
+                                TABS.forEachIndexed { i, label ->
+                                    Tab(
+                                        selected = tab == i,
+                                        onClick = { tab = i },
+                                        text = { Text(label, maxLines = 1) },
+                                        unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                            IconButton(onClick = { settingsOpen = true }) {
+                                Icon(
+                                    Icons.Filled.Settings,
+                                    contentDescription = "설정",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
                         }
@@ -163,7 +256,14 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 }
+                } // else (설정 화면이 아닐 때)
+              }
             }
         }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        if (isFinishing) thumbnails.shutdown()
     }
 }
