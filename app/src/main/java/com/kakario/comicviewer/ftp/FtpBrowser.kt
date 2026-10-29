@@ -1,6 +1,10 @@
 package com.kakario.comicviewer.ftp
 
 import com.kakario.comicviewer.data.FtpServer
+import com.kakario.comicviewer.model.FileEntry
+import com.kakario.comicviewer.model.NaturalOrder
+import com.kakario.comicviewer.model.UserFacingException
+import com.kakario.comicviewer.model.joinPath
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -14,24 +18,6 @@ import java.net.NoRouteToHostException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import java.time.Duration
-
-/** 화면에 보여줄 파일/폴더 하나. */
-data class RemoteEntry(
-    val name: String,
-    val path: String,
-    val isDirectory: Boolean,
-    val size: Long,
-) {
-    val isComicArchive: Boolean
-        get() = !isDirectory && name.substringAfterLast('.', "").lowercase() in ARCHIVE_EXT
-
-    private companion object {
-        val ARCHIVE_EXT = setOf("zip", "cbz")
-    }
-}
-
-/** 사용자에게 그대로 보여줄 한국어 오류. */
-class FtpUserException(message: String) : Exception(message)
 
 /**
  * 서버 하나에 대한 FTP 연결. 한 번 접속하면 연결을 유지하고,
@@ -50,14 +36,14 @@ class FtpBrowser(private val server: FtpServer) {
         homePath
     }
 
-    suspend fun list(path: String): List<RemoteEntry> = ftp {
+    suspend fun list(path: String): List<FileEntry> = ftp {
         ensureConnected()
         if (!client.changeWorkingDirectory(path)) {
-            throw FtpUserException("폴더를 열 수 없어요: $path")
+            throw UserFacingException("폴더를 열 수 없어요: $path")
         }
         val files = client.listFiles()
         if (!FTPReply.isPositiveCompletion(client.replyCode) && files.isEmpty()) {
-            throw FtpUserException(
+            throw UserFacingException(
                 "목록을 받지 못했어요 (응답 ${client.replyCode}).\n" +
                     "외부 접속이라면 공유기에서 FTP 패시브 포트도 포트포워딩돼 있는지 확인해 주세요."
             )
@@ -65,7 +51,7 @@ class FtpBrowser(private val server: FtpServer) {
         files.filterNotNull()
             .filter { it.name != "." && it.name != ".." && !it.name.startsWith(".") }
             .map { f ->
-                RemoteEntry(
+                FileEntry(
                     name = f.name,
                     path = joinPath(path, f.name),
                     isDirectory = f.isDirectory,
@@ -73,7 +59,7 @@ class FtpBrowser(private val server: FtpServer) {
                 )
             }
             .sortedWith(
-                compareByDescending<RemoteEntry> { it.isDirectory }
+                compareByDescending<FileEntry> { it.isDirectory }
                     .thenComparator { a, b -> NaturalOrder.compare(a.name, b.name) }
             )
     }
@@ -97,26 +83,26 @@ class FtpBrowser(private val server: FtpServer) {
         mutex.withLock {
             try {
                 block()
-            } catch (e: FtpUserException) {
+            } catch (e: UserFacingException) {
                 throw e
             } catch (e: UnknownHostException) {
-                throw FtpUserException("주소를 찾을 수 없어요. 서버 주소를 다시 확인해 주세요.")
+                throw UserFacingException("주소를 찾을 수 없어요. 서버 주소를 다시 확인해 주세요.")
             } catch (e: SocketTimeoutException) {
                 dropConnection()
-                throw FtpUserException(
+                throw UserFacingException(
                     "서버 응답이 없어요.\n외부 접속이라면 공유기 포트포워딩(${server.port}번)과 서버가 켜져 있는지 확인해 주세요."
                 )
             } catch (e: ConnectException) {
                 dropConnection()
-                throw FtpUserException(
+                throw UserFacingException(
                     "서버에 연결할 수 없어요.\n주소·포트가 맞는지, 외부 접속이라면 포트포워딩이 돼 있는지 확인해 주세요."
                 )
             } catch (e: NoRouteToHostException) {
                 dropConnection()
-                throw FtpUserException("서버까지 가는 경로가 없어요. 인터넷 연결과 주소를 확인해 주세요.")
+                throw UserFacingException("서버까지 가는 경로가 없어요. 인터넷 연결과 주소를 확인해 주세요.")
             } catch (e: IOException) {
                 dropConnection()
-                throw FtpUserException("연결 중 문제가 생겼어요: ${e.message ?: e.javaClass.simpleName}")
+                throw UserFacingException("연결 중 문제가 생겼어요: ${e.message ?: e.javaClass.simpleName}")
             }
         }
     }
@@ -141,7 +127,7 @@ class FtpBrowser(private val server: FtpServer) {
         if (!FTPReply.isPositiveCompletion(client.replyCode)) {
             val code = client.replyCode
             dropConnection()
-            throw FtpUserException("서버가 접속을 거부했어요 (응답 $code).")
+            throw UserFacingException("서버가 접속을 거부했어요 (응답 $code).")
         }
         client.soTimeout = 20_000
         client.setDataTimeout(Duration.ofSeconds(20))
@@ -150,7 +136,7 @@ class FtpBrowser(private val server: FtpServer) {
         val pass = if (server.user.isBlank()) "guest@" else server.password
         if (!client.login(user, pass)) {
             dropConnection()
-            throw FtpUserException("로그인에 실패했어요. 아이디와 비밀번호를 확인해 주세요.")
+            throw UserFacingException("로그인에 실패했어요. 아이디와 비밀번호를 확인해 주세요.")
         }
         if (server.encoding.equals("UTF-8", ignoreCase = true)) {
             // 지원하지 않는 서버는 그냥 무시하므로 보내도 안전하다.
@@ -173,39 +159,5 @@ class FtpBrowser(private val server: FtpServer) {
             if (client.isConnected) client.disconnect()
         } catch (_: IOException) {
         }
-    }
-
-    companion object {
-        fun joinPath(parent: String, name: String): String =
-            if (parent.endsWith("/")) parent + name else "$parent/$name"
-
-        fun parentPath(path: String): String {
-            val trimmed = path.trimEnd('/')
-            val idx = trimmed.lastIndexOf('/')
-            return if (idx <= 0) "/" else trimmed.substring(0, idx)
-        }
-    }
-}
-
-/** "2권"이 "10권"보다 앞에 오도록 숫자를 숫자로 비교하는 정렬. */
-object NaturalOrder : Comparator<String> {
-    private val chunk = Regex("\\d+|\\D+")
-
-    override fun compare(a: String, b: String): Int {
-        val ca = chunk.findAll(a.lowercase()).map { it.value }.toList()
-        val cb = chunk.findAll(b.lowercase()).map { it.value }.toList()
-        for (i in 0 until minOf(ca.size, cb.size)) {
-            val x = ca[i]
-            val y = cb[i]
-            val r = if (x[0].isDigit() && y[0].isDigit()) {
-                val nx = x.trimStart('0')
-                val ny = y.trimStart('0')
-                if (nx.length != ny.length) nx.length - ny.length else nx.compareTo(ny)
-            } else {
-                x.compareTo(y)
-            }
-            if (r != 0) return r
-        }
-        return ca.size - cb.size
     }
 }
