@@ -17,7 +17,10 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Semaphore
@@ -91,7 +94,8 @@ class ThumbnailLoader(context: Context) {
 
     private suspend fun produce(key: String, origin: ThumbOrigin, entry: FileEntry): Bitmap? {
         val bmp = readDisk(key) ?: try {
-            val raw = if (entry.isDirectory) folderCover(origin, entry.path) else zipCover(origin, entry)
+            // 폴더에는 표지를 만들지 않는다 (파일만)
+            val raw = if (entry.isDirectory) null else zipCover(origin, entry)
             raw?.let { withContext(Dispatchers.Default) { makeThumb(it) } }
                 ?.also { writeDisk(key, it) }
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -104,17 +108,120 @@ class ThumbnailLoader(context: Context) {
         return bmp
     }
 
-    /**
-     * 폴더 안 표지를 화면에 안 보이는 것까지 차례로 만들어둔다.
-     * onProgress(만든 개수, 전체). 호출한 쪽이 취소하면(폴더를 나가면) 멈춘다.
-     */
-    suspend fun preload(origin: ThumbOrigin, entries: List<FileEntry>, onProgress: (Int, Int) -> Unit) {
-        val targets = entries.filter { it.isDirectory || it.isComicArchive }
-        onProgress(0, targets.size)
-        targets.forEachIndexed { i, e ->
-            paused.first { !it }
-            load(origin, e)
-            onProgress(i + 1, targets.size)
+    // ───────────────────────── 폴더 썸네일 갱신 작업 줄 ─────────────────────────
+    //  · 한 번에 한 폴더만 처리한다.
+    //  · '지금 보는 폴더'는 자동으로 갱신하고, 다른 폴더로 가면 그 작업은 취소된다.
+    //  · 길게 눌러 '썸네일 갱신하기'를 누른 폴더들은 줄을 서서 차례로 처리된다.
+    //  · 이미 있는 표지는 건너뛰고, 없는 표지만 만든다.
+
+    private class Job(val origin: ThumbOrigin, val path: String, val label: String, val auto: Boolean)
+
+    /** 화면 상단에 보여줄 상태. null이면 아무 작업도 없음. */
+    data class Status(val label: String, val waiting: Int)
+
+    private val _status = MutableStateFlow<Status?>(null)
+    val status: StateFlow<Status?> = _status
+
+    private val jobLock = Any()
+    private var autoJob: Job? = null
+    private val queue = ArrayDeque<Job>()
+    private var running: Job? = null
+    private var runningTask: kotlinx.coroutines.Job? = null
+    private val wake = Channel<Unit>(Channel.CONFLATED)
+
+    init {
+        scope.launch { worker() }
+    }
+
+    /** 지금 보고 있는 폴더 — 이전 폴더의 자동 갱신은 멈추고 이 폴더로 바꾼다. */
+    fun watchFolder(origin: ThumbOrigin, path: String, label: String) {
+        synchronized(jobLock) {
+            val r = running
+            if (r != null && r.auto && (r.path != path || r.origin != origin)) runningTask?.cancel()
+            if (r != null && r.auto && r.path == path && r.origin == origin) return
+            autoJob = Job(origin, path, label, auto = true)
+            publishLocked()
+        }
+        wake.trySend(Unit)
+    }
+
+    /** 폴더를 떠날 때 — 그 폴더의 자동 갱신을 멈춘다. */
+    fun unwatchFolder(origin: ThumbOrigin, path: String) {
+        synchronized(jobLock) {
+            if (autoJob?.let { it.path == path && it.origin == origin } == true) autoJob = null
+            val r = running
+            if (r != null && r.auto && r.path == path && r.origin == origin) runningTask?.cancel()
+            publishLocked()
+        }
+    }
+
+    /** 길게 눌러 요청한 폴더 갱신 — 줄 맨 뒤에 선다. 이미 줄에 있으면 false. */
+    fun requestFolder(origin: ThumbOrigin, path: String, label: String): Boolean {
+        synchronized(jobLock) {
+            val r = running
+            if (r != null && !r.auto && r.path == path && r.origin == origin) return false
+            if (queue.any { it.path == path && it.origin == origin }) return false
+            queue.addLast(Job(origin, path, label, auto = false))
+            publishLocked()
+        }
+        wake.trySend(Unit)
+        return true
+    }
+
+    /** 진행 중·대기 중인 갱신을 모두 멈춘다. */
+    fun stopAll() {
+        synchronized(jobLock) {
+            queue.clear()
+            autoJob = null
+            runningTask?.cancel()
+            publishLocked()
+        }
+    }
+
+    private fun publishLocked() {
+        val r = running
+        val waiting = queue.size + (if (autoJob != null && r != null) 1 else 0)
+        _status.value = r?.let { Status(it.label, waiting) }
+    }
+
+    private suspend fun worker() {
+        while (true) {
+            val job = synchronized(jobLock) {
+                // 지금 보는 폴더가 먼저, 그다음 요청한 폴더 순서대로
+                val next = autoJob?.also { autoJob = null } ?: queue.removeFirstOrNull()
+                running = next
+                publishLocked()
+                next
+            }
+            if (job == null) {
+                wake.receive()
+                continue
+            }
+            val task = scope.launch { process(job) }
+            synchronized(jobLock) { runningTask = task }
+            task.join()
+            synchronized(jobLock) {
+                running = null
+                runningTask = null
+                publishLocked()
+            }
+        }
+    }
+
+    private suspend fun process(job: Job) {
+        try {
+            val zips = list(job.origin, job.path).filter { it.isComicArchive }
+            for (e in zips) {
+                paused.first { !it } // 만화 보는 중엔 잠깐 쉼
+                val key = keyFor(job.origin, e)
+                if (memory.get(key) != null || fileFor(key).exists()) continue // 이미 있음
+                misses.remove(key) // 전에 실패했던 것도 다시 시도
+                load(job.origin, e)
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // 폴더를 못 읽으면 이 작업은 건너뛴다
         }
     }
 
@@ -138,15 +245,6 @@ class ThumbnailLoader(context: Context) {
         } ?: return null
         pageCounts[key] = count
         return count
-    }
-
-    /** 폴더 표지: 이름순 첫 ZIP, 없으면 첫 하위 폴더 안의 첫 ZIP. */
-    private suspend fun folderCover(origin: ThumbOrigin, path: String, depth: Int = 0): ByteArray? {
-        val entries = list(origin, path)
-        entries.firstOrNull { it.isComicArchive }?.let { return zipCover(origin, it) }
-        if (depth >= 1) return null
-        val sub = entries.firstOrNull { it.isDirectory } ?: return null
-        return folderCover(origin, sub.path, depth + 1)
     }
 
     suspend fun list(origin: ThumbOrigin, path: String): List<FileEntry> {

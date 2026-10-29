@@ -1,6 +1,16 @@
 package com.kakario.comicviewer
 
 import android.os.Bundle
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import android.view.KeyEvent
 import com.kakario.comicviewer.viewer.PageKeys
 import androidx.activity.ComponentActivity
@@ -229,6 +239,7 @@ class MainActivity : ComponentActivity() {
                 Scaffold(
                     containerColor = MaterialTheme.colorScheme.background,
                     topBar = {
+                      Column(Modifier.background(MaterialTheme.colorScheme.background)) {
                         // 상태바(시간·아이콘) 바로 아래에 탭 + 오른쪽 끝 설정 버튼
                         Row(
                             Modifier
@@ -261,6 +272,38 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
                         }
+                        // 썸네일 갱신 중일 때만 보이는 표시 (끝나면 사라짐)
+                        val thumbStatus by thumbnails.status.collectAsState()
+                        AnimatedVisibility(visible = thumbStatus != null) {
+                            val st = thumbStatus
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                                    .padding(start = 16.dp, end = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(14.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Spacer(Modifier.width(10.dp))
+                                Text(
+                                    if (st == null) "" else buildString {
+                                        append("'${st.label}' 썸네일 갱신 중")
+                                        if (st.waiting > 0) append(" · 대기 ${st.waiting}개")
+                                    },
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                TextButton(onClick = { thumbnails.stopAll() }) { Text("중지") }
+                            }
+                        }
+                      }
                     },
                 ) { padding ->
                     Box(Modifier.padding(padding).fillMaxSize()) {

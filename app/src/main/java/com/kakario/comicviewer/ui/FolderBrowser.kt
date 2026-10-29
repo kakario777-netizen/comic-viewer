@@ -5,7 +5,6 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.runtime.produceState
 import androidx.compose.material3.TextButton
 import androidx.compose.foundation.background
@@ -40,6 +39,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
@@ -60,6 +60,7 @@ import androidx.compose.ui.unit.dp
 import com.kakario.comicviewer.data.ProgressStore
 import com.kakario.comicviewer.model.FileEntry
 import com.kakario.comicviewer.model.UserFacingException
+import com.kakario.comicviewer.model.folderName
 import com.kakario.comicviewer.thumb.ThumbOrigin
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -115,19 +116,14 @@ fun FolderBrowser(
         }
     }
 
-    // ── 폴더에 들어가면 안 보이는 칸까지 표지를 차례로 만들어둔다
+    // ── 지금 보는 폴더만 자동으로 없는 표지를 채운다 (나가면 멈춤)
     val thumbs = LocalThumbnails.current
-    var preloadDone by remember { mutableIntStateOf(0) }
-    var preloadTotal by remember { mutableIntStateOf(0) }
-    var preloadKey by remember { mutableIntStateOf(0) }
     val loaded = (state as? LoadState.Loaded)?.entries
-    LaunchedEffect(loaded, preloadKey) {
-        preloadTotal = 0
-        if (thumbs == null || loaded == null) return@LaunchedEffect
-        thumbs.preload(origin, loaded) { done, total ->
-            preloadDone = done
-            preloadTotal = total
+    DisposableEffect(thumbs, origin, path, loaded != null) {
+        if (thumbs != null && loaded != null && loaded.any { it.isComicArchive }) {
+            thumbs.watchFolder(origin, path, folderName(path))
         }
+        onDispose { thumbs?.unwatchFolder(origin, path) }
     }
 
     BackHandler(onBack = onUp)
@@ -149,7 +145,17 @@ fun FolderBrowser(
         Column(Modifier.fillMaxSize()) {
             BrowserHeader(
                 title = title,
-                subtitle = path,
+                // 파일·폴더 개수를 앞에, 경로는 뒤에 (길면 뒤가 잘림)
+                subtitle = loaded?.let { list ->
+                    val files = list.count { it.isComicArchive }
+                    val dirs = list.count { it.isDirectory }
+                    buildString {
+                        append("파일 ${files}개")
+                        if (dirs > 0) append(" · 폴더 ${dirs}개")
+                        append("  ·  ")
+                        append(path)
+                    }
+                } ?: path,
                 onBack = onUp,
                 actions = {
                     StarButton(on = isFavorite(path), onClick = { toggle(path) })
@@ -158,27 +164,6 @@ fun FolderBrowser(
                     }
                 },
             )
-
-            // 표지 만드는 중이면 얇은 막대와 개수 표시
-            if (preloadTotal > 0 && preloadDone < preloadTotal) {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    LinearProgressIndicator(
-                        progress = { preloadDone.toFloat() / preloadTotal },
-                        modifier = Modifier.weight(1f).height(3.dp),
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        "표지 $preloadDone/$preloadTotal",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
 
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 when (val s = state) {
@@ -273,22 +258,13 @@ fun FolderBrowser(
                             confirm = Confirm(target, ConfirmAction.DELETE, 1)
                         }
                     } else {
-                        MenuItem("🖼️  안쪽 썸네일 다시 만들기") {
+                        MenuItem("🖼️  썸네일 갱신하기 (없는 표지만 만들기)") {
                             menuFor = null
-                            scope.launch {
-                                toast("'${target.name}' 안쪽 표지를 다시 만들어요")
-                                try {
-                                    val inner = thumbs?.list(origin, target.path).orEmpty()
-                                    thumbs?.invalidate(origin, inner + target)
-                                    thumbs?.load(origin, target) // 이 폴더 자체 표지 먼저
-                                    thumbs?.preload(origin, inner) { _, _ -> }
-                                    toast("'${target.name}' 표지를 다시 만들었어요")
-                                } catch (e: CancellationException) {
-                                    throw e
-                                } catch (e: Exception) {
-                                    toast("다시 만들지 못했어요: ${e.message ?: e.javaClass.simpleName}")
-                                }
-                            }
+                            val added = thumbs?.requestFolder(origin, target.path, target.name) ?: false
+                            toast(
+                                if (added) "'${target.name}' 썸네일 갱신을 줄에 올렸어요 — 위쪽에 진행 표시가 떠요"
+                                else "'${target.name}'은 이미 갱신 중이거나 대기 중이에요"
+                            )
                         }
                         val fav = isFavorite(target.path)
                         MenuItem(if (fav) "☆  즐겨찾기에서 빼기" else "⭐  즐겨찾기에 추가") {
@@ -419,27 +395,25 @@ private fun ShelfTile(
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
     ) {
         Box {
-            CoverImage(
-                origin = origin,
-                entry = entry,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(0.7f)
-                    .clip(RoundedCornerShape(8.dp)),
-            )
+            val tileModifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(0.7f)
+                .clip(RoundedCornerShape(8.dp))
+            if (entry.isDirectory) {
+                // 하위 폴더는 썸네일 없이 폴더 아이콘만
+                Box(
+                    tileModifier.background(MaterialTheme.colorScheme.surface),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("📁", style = MaterialTheme.typography.displaySmall)
+                }
+            } else {
+                CoverImage(origin = origin, entry = entry, modifier = tileModifier)
+            }
             if (entry.isComicArchive) {
                 ReadBadge(origin, entry, Modifier.align(Alignment.BottomCenter))
             }
             if (entry.isDirectory) {
-                Text(
-                    "📁",
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(6.dp)
-                        .background(Badge, RoundedCornerShape(6.dp))
-                        .padding(horizontal = 4.dp, vertical = 1.dp),
-                    style = MaterialTheme.typography.labelLarge,
-                )
                 Box(
                     Modifier
                         .align(Alignment.TopEnd)
