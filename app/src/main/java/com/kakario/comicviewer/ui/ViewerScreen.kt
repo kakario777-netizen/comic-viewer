@@ -116,6 +116,8 @@ data class ViewerPrefs(
     val prefetchPages: Int = 6,
     /** 넘길 때 슬라이드 효과 (false면 효과 없이 바로) */
     val slideAnimation: Boolean = true,
+    /** 두 번 탭으로 확대 */
+    val doubleTapZoom: Boolean = false,
 )
 
 /** ZIP 만화 보기 화면 (전체화면). */
@@ -351,6 +353,7 @@ private fun BookPager(
                         book = book,
                         pages = spreads[index],
                         rightToLeft = rtl,
+                        doubleTapZoom = prefs.doubleTapZoom,
                         onZoomChange = { if (index == pagerState.currentPage) zoomed = it },
                         onTap = { x, width ->
                             val forward = pagerState.currentPage + 1
@@ -598,6 +601,7 @@ private fun SpreadView(
     book: ComicBook,
     pages: List<Int>,
     rightToLeft: Boolean,
+    doubleTapZoom: Boolean,
     onZoomChange: (Boolean) -> Unit,
     onTap: (x: Float, width: Float) -> Unit,
 ) {
@@ -616,7 +620,7 @@ private fun SpreadView(
         Modifier
             .fillMaxSize()
             .onSizeChanged { size = it }
-            .pointerInput(pages) {
+            .pointerInput(pages, doubleTapZoom) {
                 // 탭 처리 — 반응 속도를 위해 직접 구현:
                 //  · 화면 왼쪽/오른쪽 탭 = 손을 떼는 즉시 넘김 (두 번 탭인지 기다리지 않음)
                 //  · 가운데 탭 = 메뉴, 가운데 두 번 탭 = 확대/원래대로
@@ -644,11 +648,13 @@ private fun SpreadView(
                     val w = size.width.toFloat()
                     val x = up.position.x
                     val side = x < w / 3f || x > w * 2f / 3f
-                    if (scale <= 1f && side) {
+                    if (scale <= 1f && (side || !doubleTapZoom)) {
+                        // 두 번 탭 확대를 끈 경우엔 가운데 탭(메뉴)도 기다림 없이 바로
                         up.consume()
                         onTap(x, w) // 바로 넘김
                         return@awaitEachGesture
                     }
+                    if (!doubleTapZoom) return@awaitEachGesture // 확대 중 한 번 탭: 아무 일 없음
                     // 가운데(또는 확대 상태): 두 번째 탭이 오는지 잠깐 확인
                     val second = withTimeoutOrNull(doubleTapTimeout) {
                         awaitFirstDown(requireUnconsumed = false)

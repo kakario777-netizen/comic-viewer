@@ -83,4 +83,11 @@ class SettingsStore(context: Context) {
         set(value) {
             prefs.edit().putBoolean("slide_animation", value).apply()
         }
+
+    /** 화면 가운데 두 번 탭으로 확대 (기본 꺼짐 — 켜면 가운데 탭 메뉴가 약간 늦게 뜸). */
+    var doubleTapZoom: Boolean
+        get() = prefs.getBoolean("double_tap_zoom", false)
+        set(value) {
+            prefs.edit().putBoolean("double_tap_zoom", value).apply()
+        }
 }

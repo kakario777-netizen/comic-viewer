@@ -175,6 +175,11 @@ fun SettingsScreen(
                 checked = viewerPrefs.showInfoBar,
             ) { onViewerPrefsChange(viewerPrefs.copy(showInfoBar = it)) }
             SwitchRow(
+                title = "두 번 탭으로 확대",
+                subtitle = "화면 가운데를 두 번 탭하면 확대/원래대로. 켜면 가운데 탭 메뉴가 살짝 늦게 떠요. 두 손가락 확대는 항상 돼요",
+                checked = viewerPrefs.doubleTapZoom,
+            ) { onViewerPrefsChange(viewerPrefs.copy(doubleTapZoom = it)) }
+            SwitchRow(
                 title = "볼륨 버튼으로 넘기기",
                 subtitle = "아래 버튼 = 다음 장, 위 버튼 = 이전 장. 블루투스 페이지 터너는 항상 동작해요",
                 checked = viewerPrefs.volumeKeys,

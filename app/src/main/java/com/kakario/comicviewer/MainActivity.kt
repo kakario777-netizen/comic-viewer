@@ -145,7 +145,8 @@ class MainActivity : ComponentActivity() {
             var ftpConnections by remember { mutableIntStateOf(settingsStore.ftpConnections) }
             var prefetchPages by remember { mutableIntStateOf(settingsStore.prefetchPages) }
             var slideAnimation by remember { mutableStateOf(settingsStore.slideAnimation) }
-            val viewerPrefs = ViewerPrefs(pageLayout, rightToLeft, showInfoBar, volumeKeys, ftpConnections, prefetchPages, slideAnimation)
+            var doubleTapZoom by remember { mutableStateOf(settingsStore.doubleTapZoom) }
+            val viewerPrefs = ViewerPrefs(pageLayout, rightToLeft, showInfoBar, volumeKeys, ftpConnections, prefetchPages, slideAnimation, doubleTapZoom)
             fun saveViewerPrefs(p: ViewerPrefs) {
                 pageLayout = p.pageLayout; settingsStore.pageLayout = p.pageLayout
                 rightToLeft = p.rightToLeft; settingsStore.rightToLeft = p.rightToLeft
@@ -154,6 +155,7 @@ class MainActivity : ComponentActivity() {
                 ftpConnections = p.connections; settingsStore.ftpConnections = p.connections
                 prefetchPages = p.prefetchPages; settingsStore.prefetchPages = p.prefetchPages
                 slideAnimation = p.slideAnimation; settingsStore.slideAnimation = p.slideAnimation
+                doubleTapZoom = p.doubleTapZoom; settingsStore.doubleTapZoom = p.doubleTapZoom
             }
             val dark = when (themeMode) {
                 ThemeMode.SYSTEM -> isSystemInDarkTheme()
