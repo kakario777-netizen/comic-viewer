@@ -26,7 +26,8 @@ import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -278,7 +279,8 @@ private fun BookPager(
         fun goToSpread(index: Int) {
             if (index !in 0..endIndex) return
             scope.launch {
-                if (prefs.slideAnimation) pagerState.animateScrollToPage(index)
+                // 넘김 애니메이션을 짧게 (기본 약 0.5초 → 0.18초)
+                if (prefs.slideAnimation) pagerState.animateScrollToPage(index, animationSpec = tween(180))
                 else pagerState.scrollToPage(index)
             }
         }
@@ -615,22 +617,50 @@ private fun SpreadView(
             .fillMaxSize()
             .onSizeChanged { size = it }
             .pointerInput(pages) {
-                detectTapGestures(
-                    onTap = { pos -> if (scale <= 1f) onTap(pos.x, size.width.toFloat()) },
-                    onDoubleTap = { pos ->
-                        if (scale > 1f) {
-                            scale = 1f
-                            offset = Offset.Zero
-                            onZoomChange(false)
-                        } else {
-                            val s = 2.5f
-                            val center = Offset(size.width / 2f, size.height / 2f)
-                            scale = s
-                            offset = clamp((pos - center) * (1f - s), s)
-                            onZoomChange(true)
-                        }
-                    },
-                )
+                // 탭 처리 — 반응 속도를 위해 직접 구현:
+                //  · 화면 왼쪽/오른쪽 탭 = 손을 떼는 즉시 넘김 (두 번 탭인지 기다리지 않음)
+                //  · 가운데 탭 = 메뉴, 가운데 두 번 탭 = 확대/원래대로
+                //  · 확대된 상태에선 어디든 두 번 탭하면 원래대로
+                fun doubleTap(pos: Offset) {
+                    if (scale > 1f) {
+                        scale = 1f
+                        offset = Offset.Zero
+                        onZoomChange(false)
+                    } else {
+                        val z = 2.5f
+                        val center = Offset(size.width / 2f, size.height / 2f)
+                        scale = z
+                        offset = clamp((pos - center) * (1f - z), z)
+                        onZoomChange(true)
+                    }
+                }
+                val doubleTapTimeout = viewConfiguration.doubleTapTimeoutMillis
+                val longPress = viewConfiguration.longPressTimeoutMillis
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    // 밀어서 넘기는 중이면(페이지가 움직임을 가져가면) null → 탭 아님
+                    val up = waitForUpOrCancellation() ?: return@awaitEachGesture
+                    if (up.uptimeMillis - down.uptimeMillis > longPress) return@awaitEachGesture
+                    val w = size.width.toFloat()
+                    val x = up.position.x
+                    val side = x < w / 3f || x > w * 2f / 3f
+                    if (scale <= 1f && side) {
+                        up.consume()
+                        onTap(x, w) // 바로 넘김
+                        return@awaitEachGesture
+                    }
+                    // 가운데(또는 확대 상태): 두 번째 탭이 오는지 잠깐 확인
+                    val second = withTimeoutOrNull(doubleTapTimeout) {
+                        awaitFirstDown(requireUnconsumed = false)
+                    }
+                    if (second == null) {
+                        if (scale <= 1f) onTap(x, w) // 메뉴 열기/닫기
+                        return@awaitEachGesture
+                    }
+                    val up2 = waitForUpOrCancellation() ?: return@awaitEachGesture
+                    up2.consume()
+                    doubleTap(up2.position)
+                }
             }
             .pointerInput(pages) {
                 // 두 손가락이면 확대/축소, 확대된 상태면 한 손가락으로 이동.
