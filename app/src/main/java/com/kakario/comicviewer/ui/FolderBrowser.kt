@@ -41,6 +41,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import com.kakario.comicviewer.dup.DupScanner
+import com.kakario.comicviewer.dup.FolderDiff
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -126,6 +129,36 @@ fun FolderBrowser(
         onDispose { thumbs?.unwatchFolder(origin, path) }
     }
 
+    // ── 중복 검사
+    val dup = remember { DupScanner.get(context) }
+    val dupState by dup.state.collectAsState()
+    val dupKey = dup.keyOf(origin, path)
+    var watched by remember(dupKey) { mutableStateOf(dup.isWatched(origin, path)) }
+    var dupMenu by remember { mutableStateOf(false) }
+    var updateDiff by remember { mutableStateOf<FolderDiff?>(null) }
+    var progressHidden by remember { mutableStateOf(false) }
+    // 중복 검사 폴더에 들어오면 기록과 비교 → 새 자료가 있으면 물어본다
+    LaunchedEffect(dupKey, loaded, watched) {
+        updateDiff = null
+        if (!watched || loaded == null) return@LaunchedEffect
+        if (dup.isSnoozed(origin, path, loaded)) return@LaunchedEffect
+        val running = dupState
+        if (running is DupScanner.State.Running && running.key == dupKey) return@LaunchedEffect
+        val d = try {
+            dup.checkChanges(origin, path, loaded)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        }
+        if (d != null && d.hasNew) updateDiff = d
+    }
+    fun startDupScan() {
+        val list = loaded ?: return
+        progressHidden = false
+        dup.scan(origin, path, folderName(path), list)
+    }
+
     BackHandler(onBack = onUp)
 
     fun toast(msg: String) {
@@ -158,6 +191,13 @@ fun FolderBrowser(
                 } ?: path,
                 onBack = onUp,
                 actions = {
+                    TextButton(onClick = { dupMenu = true }) {
+                        Text(
+                            if (watched) "중복✓" else "중복",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = if (watched) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     StarButton(on = isFavorite(path), onClick = { toggle(path) })
                     IconButton(onClick = { reloadKey++ }) {
                         Icon(Icons.Filled.Refresh, contentDescription = "새로고침")
@@ -212,6 +252,88 @@ fun FolderBrowser(
             }
         }
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
+    }
+
+    // ── 중복 검사 창들
+    if (dupMenu) {
+        DupMenuDialog(
+            folderLabel = folderName(path),
+            watched = watched,
+            onWatchChange = {
+                watched = it
+                dup.setWatched(origin, path, it)
+                toast(if (it) "중복 검사 폴더로 지정했어요 — 새 자료가 들어오면 알려드려요" else "중복 검사 폴더에서 뺐어요")
+            },
+            onScanNow = {
+                dupMenu = false
+                startDupScan()
+            },
+            onDismiss = { dupMenu = false },
+        )
+    }
+    updateDiff?.let { d ->
+        DupUpdateDialog(
+            diff = d,
+            onCheck = {
+                updateDiff = null
+                startDupScan()
+            },
+            onLater = {
+                updateDiff = null
+                loaded?.let { dup.snooze(origin, path, it) }
+            },
+        )
+    }
+    when (val ds = dupState) {
+        is DupScanner.State.Running -> if (ds.key == dupKey && !progressHidden) {
+            DupProgressDialog(
+                state = ds,
+                onHide = {
+                    progressHidden = true
+                    toast("중복 검사는 계속 진행돼요 — 끝나면 결과가 떠요")
+                },
+                onCancel = { dup.cancel() },
+            )
+        }
+        is DupScanner.State.Done -> if (ds.key == dupKey) {
+            DupResultDialog(
+                state = ds,
+                onOpen = { b ->
+                    val zips = loaded.orEmpty().filter { it.isComicArchive }
+                    zips.firstOrNull { it.name == b.name }?.let { onOpenArchive(it, zips) }
+                },
+                onDelete = { b ->
+                    val target = loaded.orEmpty().firstOrNull { it.name == b.name }
+                    if (target == null) {
+                        dup.forget(origin, path, b.name)
+                    } else {
+                        scope.launch {
+                            try {
+                                currentDelete(target)
+                                progressStore.clear(progressStore.keyFor(origin, target))
+                                dup.forget(origin, path, b.name)
+                                toast("삭제했어요")
+                                reloadKey++
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                toast(e.message ?: "삭제하지 못했어요")
+                            }
+                        }
+                    }
+                },
+                onClose = { dup.dismissResult() },
+            )
+        }
+        is DupScanner.State.Failed -> if (ds.key == dupKey) {
+            AlertDialog(
+                onDismissRequest = { dup.dismissResult() },
+                title = { Text("중복 검사") },
+                text = { Text(ds.message) },
+                confirmButton = { TextButton(onClick = { dup.dismissResult() }) { Text("확인") } },
+            )
+        }
+        DupScanner.State.Idle -> Unit
     }
 
     // ── 길게 누르기 메뉴

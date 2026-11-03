@@ -13,6 +13,8 @@ import kotlinx.coroutines.withContext
 import org.apache.commons.net.ftp.FTP
 import org.apache.commons.net.ftp.FTPClient
 import org.apache.commons.net.ftp.FTPReply
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.ConnectException
 import java.net.NoRouteToHostException
@@ -108,6 +110,21 @@ class FtpBrowser(private val server: FtpServer) {
         }
         client.setRestartOffset(0)
         return if (read < length) buf.copyOf(read) else buf
+    }
+
+    /** 작은 파일 하나를 통째로 읽는다 (없으면 null). 중복 검사 기록 파일용. */
+    suspend fun readSmall(path: String): ByteArray? = ftp {
+        ensureConnected()
+        client.setRestartOffset(0)
+        val out = ByteArrayOutputStream()
+        if (client.retrieveFile(path, out)) out.toByteArray() else null
+    }
+
+    /** 작은 파일 하나를 쓴다 (덮어쓰기). 쓰기 권한이 없으면 false. */
+    suspend fun writeSmall(path: String, data: ByteArray): Boolean = ftp {
+        ensureConnected()
+        client.setRestartOffset(0)
+        client.storeFile(path, ByteArrayInputStream(data))
     }
 
     /** 서버에서 파일 하나를 지운다. */

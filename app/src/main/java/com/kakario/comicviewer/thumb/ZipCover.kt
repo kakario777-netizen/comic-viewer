@@ -32,6 +32,8 @@ object ZipCover {
         val compressedSize: Long,
         val size: Long,
         val localOffset: Long,
+        /** 압축 전 데이터의 CRC32 — 중복 검사 지문에 쓴다. */
+        val crc: Long = 0,
     )
 
     /** 표지 이미지의 원본 바이트. 이미지가 없거나 읽을 수 없는 ZIP이면 null. */
@@ -128,7 +130,7 @@ object ZipCover {
                 }
             }
 
-            result += Entry(name, method, flags, compSize, uncompSize, localOffset)
+            result += Entry(name, method, flags, compSize, uncompSize, localOffset, u32(cen, p + 16))
             p += 46 + nameLen + extraLen + commentLen
         }
         return result
