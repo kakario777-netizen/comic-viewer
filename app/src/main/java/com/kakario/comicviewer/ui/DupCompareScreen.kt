@@ -21,6 +21,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.union
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
@@ -85,11 +88,20 @@ fun DupCompareScreen(
     onIgnore: () -> Unit,
     onClose: () -> Unit,
 ) {
+    // 대화상자 창은 화면 가장자리(상태바·내비게이션바) 정보를 못 받는 폰이 있어서,
+    // 앱 화면 쪽에서 읽은 값을 넘겨준다 → 아래 막대가 내비게이션바 위로 올라옴
+    val outer = WindowInsets.safeDrawing.asPaddingValues()
+    val outerInsets = WindowInsets(
+        left = outer.calculateLeftPadding(LayoutDirection.Ltr),
+        top = outer.calculateTopPadding(),
+        right = outer.calculateRightPadding(LayoutDirection.Ltr),
+        bottom = outer.calculateBottomPadding(),
+    )
     Dialog(
         onDismissRequest = onClose,
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
     ) {
-        CompareContent(origin, group, files, onDelete, onIgnore, onClose)
+        CompareContent(origin, group, files, onDelete, onIgnore, onClose, outerInsets)
     }
 }
 
@@ -101,6 +113,7 @@ private fun CompareContent(
     onDelete: suspend (BookPrint) -> Unit,
     onIgnore: () -> Unit,
     onClose: () -> Unit,
+    outerInsets: WindowInsets,
 ) {
     BackHandler(onBack = onClose)
     val scope = rememberCoroutineScope()
@@ -154,7 +167,8 @@ private fun CompareContent(
         Modifier
             .fillMaxSize()
             .background(Bg)
-            .windowInsetsPadding(WindowInsets.safeDrawing)
+            // 둘 중 큰 쪽 — 대화상자가 직접 받은 값과 앱 화면에서 읽은 값
+            .windowInsetsPadding(WindowInsets.safeDrawing.union(outerInsets))
     ) {
         // ── 위: 닫기 · 묶음 종류 · 무시
         Row(

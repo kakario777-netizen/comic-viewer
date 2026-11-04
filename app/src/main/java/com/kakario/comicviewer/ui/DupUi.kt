@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -119,6 +120,7 @@ fun DupPendingDialog(
     onCompare: (DupGroup) -> Unit,
     onIgnore: (DupGroup) -> Unit,
     onClose: () -> Unit,
+    listState: LazyListState,
 ) {
     AlertDialog(
         onDismissRequest = onClose,
@@ -170,7 +172,7 @@ fun DupPendingDialog(
                     }
                     pending == null -> Text("아직 이 폴더를 검사한 적이 없어요.\n'지금 검사'를 눌러 시작하세요.")
                     pending.isEmpty() -> Text("남은 중복이 없어요.\n(삭제하거나 무시한 묶음은 여기서 빠져요)")
-                    else -> LazyColumn(Modifier.heightIn(max = 420.dp)) {
+                    else -> LazyColumn(Modifier.heightIn(max = 420.dp), state = listState) {
                         pending.forEachIndexed { i, g ->
                             item(key = g.signature) {
                                 if (i > 0) HorizontalDivider(Modifier.padding(vertical = 6.dp))

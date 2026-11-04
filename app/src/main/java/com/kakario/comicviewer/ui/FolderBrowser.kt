@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
@@ -186,6 +187,17 @@ fun FolderBrowser(
             dupMenu = true
         }
     }
+    // 중복 목록 스크롤 위치 — 비교 화면에 다녀와도 보던 자리 그대로
+    val pendingListState = rememberLazyListState()
+
+    /** 지운 파일을 목록·중복 묶음에서 바로 뺀다 (폴더를 다시 읽지 않아서 스크롤이 안 튐). */
+    fun removeLocally(name: String) {
+        (state as? LoadState.Loaded)?.let { st -> state = LoadState.Loaded(st.entries.filter { it.name != name }) }
+        pending = pending
+            ?.map { g -> g.copy(items = g.items.filter { it.name != name }) }
+            ?.filter { it.items.size >= 2 }
+    }
+
     fun startDupScan() {
         val list = loaded ?: return
         progressHidden = false
@@ -309,9 +321,9 @@ fun FolderBrowser(
             },
             onCompare = { comparing = it },
             onIgnore = { g ->
+                pending = pending?.filter { it.signature != g.signature } // 목록에서 바로 빼기
                 scope.launch {
                     dup.ignore(origin, path, g)
-                    pendingRefresh++
                     toast("무시했어요 — 이 묶음에 새 파일이 생기면 다시 보여요")
                 }
             },
@@ -319,6 +331,7 @@ fun FolderBrowser(
                 dupMenu = false
                 savedNote = null
             },
+            listState = pendingListState,
         )
     }
     comparing?.let { g ->
@@ -333,20 +346,17 @@ fun FolderBrowser(
                     progressStore.clear(progressStore.keyFor(origin, target))
                 }
                 dup.forget(origin, path, b.name)
-                reloadKey++
+                removeLocally(b.name)
             },
             onIgnore = {
                 comparing = null
+                pending = pending?.filter { it.signature != g.signature }
                 scope.launch {
                     dup.ignore(origin, path, g)
-                    pendingRefresh++
                     toast("무시했어요")
                 }
             },
-            onClose = {
-                comparing = null
-                pendingRefresh++
-            },
+            onClose = { comparing = null },
         )
     }
     updateDiff?.let { d ->
@@ -484,7 +494,8 @@ fun FolderBrowser(
                                 currentDelete(c.entry)
                                 progressStore.clear(key)
                                 toast("삭제했어요")
-                                reloadKey++
+                                removeLocally(c.entry.name)
+                                scope.launch { runCatching { dup.forget(origin, path, c.entry.name) } }
                             } catch (e: CancellationException) {
                                 throw e
                             } catch (e: UserFacingException) {
