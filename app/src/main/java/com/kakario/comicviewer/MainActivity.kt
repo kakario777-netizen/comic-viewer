@@ -40,6 +40,8 @@ import com.kakario.comicviewer.data.SettingsStore
 import com.kakario.comicviewer.data.ThemeMode
 import com.kakario.comicviewer.thumb.ThumbnailLoader
 import com.kakario.comicviewer.ui.LocalThumbnails
+import com.kakario.comicviewer.ui.LocalOverlayHost
+import com.kakario.comicviewer.ui.OverlayHost
 import com.kakario.comicviewer.ui.LocalGridColumns
 import com.kakario.comicviewer.ui.ViewerScreen
 import com.kakario.comicviewer.ui.ThumbStatusBar
@@ -137,6 +139,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             var themeMode by remember { mutableStateOf(settingsStore.themeMode) }
+            val overlayHost = remember { OverlayHost() }
             var gridColumns by remember { mutableIntStateOf(settingsStore.gridColumns) }
             var rightToLeft by remember { mutableStateOf(settingsStore.rightToLeft) }
             var pageLayout by remember { mutableStateOf(settingsStore.pageLayout) }
@@ -177,6 +180,7 @@ class MainActivity : ComponentActivity() {
               CompositionLocalProvider(
                 LocalThumbnails provides thumbnails,
                 LocalGridColumns provides gridColumns,
+                LocalOverlayHost provides overlayHost,
               ) {
                 var settingsOpen by remember { mutableStateOf(false) }
                 // 지금 보고 있는 만화책 (null이면 뷰어 닫힘)
@@ -373,6 +377,8 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                 }
+                // 중복 비교 화면 등 — 탭·제목줄까지 덮는 자리
+                overlayHost.content?.invoke()
                 // 만화 뷰어는 책장 위에 덮어서 띄운다 (닫으면 보던 책장 그대로)
                 openBook?.let { book ->
                     ViewerScreen(

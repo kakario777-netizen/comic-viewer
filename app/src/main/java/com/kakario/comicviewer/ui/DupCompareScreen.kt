@@ -6,6 +6,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,9 +22,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.union
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
@@ -59,8 +57,6 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import com.kakario.comicviewer.dup.BookPrint
 import com.kakario.comicviewer.dup.DupGroup
 import com.kakario.comicviewer.model.FileEntry
@@ -88,21 +84,8 @@ fun DupCompareScreen(
     onIgnore: () -> Unit,
     onClose: () -> Unit,
 ) {
-    // 대화상자 창은 화면 가장자리(상태바·내비게이션바) 정보를 못 받는 폰이 있어서,
-    // 앱 화면 쪽에서 읽은 값을 넘겨준다 → 아래 막대가 내비게이션바 위로 올라옴
-    val outer = WindowInsets.safeDrawing.asPaddingValues()
-    val outerInsets = WindowInsets(
-        left = outer.calculateLeftPadding(LayoutDirection.Ltr),
-        top = outer.calculateTopPadding(),
-        right = outer.calculateRightPadding(LayoutDirection.Ltr),
-        bottom = outer.calculateBottomPadding(),
-    )
-    Dialog(
-        onDismissRequest = onClose,
-        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
-    ) {
-        CompareContent(origin, group, files, onDelete, onIgnore, onClose, outerInsets)
-    }
+    // 앱 화면 위에 직접 덮어 그린다 (대화상자 창은 폰에 따라 위치가 상태바만큼 밀려서 안 씀)
+    CompareContent(origin, group, files, onDelete, onIgnore, onClose)
 }
 
 @Composable
@@ -113,7 +96,6 @@ private fun CompareContent(
     onDelete: suspend (BookPrint) -> Unit,
     onIgnore: () -> Unit,
     onClose: () -> Unit,
-    outerInsets: WindowInsets,
 ) {
     BackHandler(onBack = onClose)
     val scope = rememberCoroutineScope()
@@ -167,8 +149,9 @@ private fun CompareContent(
         Modifier
             .fillMaxSize()
             .background(Bg)
-            // 둘 중 큰 쪽 — 대화상자가 직접 받은 값과 앱 화면에서 읽은 값
-            .windowInsetsPadding(WindowInsets.safeDrawing.union(outerInsets))
+            // 뒤쪽 책장이 눌리지 않게 터치를 여기서 받아둔다
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
+            .windowInsetsPadding(WindowInsets.safeDrawing)
     ) {
         // ── 위: 닫기 · 묶음 종류 · 무시
         Row(

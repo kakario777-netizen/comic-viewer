@@ -367,30 +367,43 @@ fun FolderBrowser(
             listState = pendingListState,
         )
     }
-    comparing?.let { g ->
-        DupCompareScreen(
-            origin = origin,
-            group = g,
-            files = presentZips.orEmpty(),
-            onDelete = { b ->
-                val target = presentZips?.get(b.name)
-                if (target != null) {
-                    currentDelete(target)
-                    progressStore.clear(progressStore.keyFor(origin, target))
-                }
-                dup.forget(origin, path, b.name)
-                removeLocally(b.name)
-            },
-            onIgnore = {
-                comparing = null
-                pending = pending?.filter { it.signature != g.signature }
-                scope.launch {
-                    dup.ignore(origin, path, g)
-                    toast("무시했어요")
-                }
-            },
-            onClose = { comparing = null },
-        )
+    // 비교 화면은 앱 화면 맨 위(탭까지 덮는 자리)에 그린다
+    val overlay = LocalOverlayHost.current
+    val compareContent: (@Composable () -> Unit)? = comparing?.let { g ->
+        {
+            DupCompareScreen(
+                origin = origin,
+                group = g,
+                files = presentZips.orEmpty(),
+                onDelete = { b ->
+                    val target = presentZips?.get(b.name)
+                    if (target != null) {
+                        currentDelete(target)
+                        progressStore.clear(progressStore.keyFor(origin, target))
+                    }
+                    dup.forget(origin, path, b.name)
+                    removeLocally(b.name)
+                },
+                onIgnore = {
+                    comparing = null
+                    pending = pending?.filter { it.signature != g.signature }
+                    scope.launch {
+                        dup.ignore(origin, path, g)
+                        toast("무시했어요")
+                    }
+                },
+                onClose = { comparing = null },
+            )
+        }
+    }
+    val latestCompare by rememberUpdatedState(compareContent)
+    if (overlay == null) {
+        compareContent?.invoke()
+    } else {
+        DisposableEffect(overlay, comparing != null) {
+            overlay.content = if (comparing != null) ({ latestCompare?.invoke() }) else null
+            onDispose { overlay.content = null }
+        }
     }
     updateDiff?.let { d ->
         DupUpdateDialog(
