@@ -68,3 +68,25 @@ object NaturalOrder : Comparator<String> {
         return ca.size - cb.size
     }
 }
+
+/** 책장 정렬: 기준(이름·날짜·크기), 오름/내림, 폴더 위/아래. 같으면 이름순. */
+fun List<FileEntry>.sortedForShelf(
+    key: com.kakario.comicviewer.data.SortKey,
+    ascending: Boolean,
+    foldersFirst: Boolean,
+): List<FileEntry> {
+    val byName = Comparator<FileEntry> { a, b -> NaturalOrder.compare(a.name, b.name) }
+    val primary: Comparator<FileEntry> = when (key) {
+        com.kakario.comicviewer.data.SortKey.NAME -> byName
+        com.kakario.comicviewer.data.SortKey.DATE -> compareBy { it.modified }
+        com.kakario.comicviewer.data.SortKey.SIZE -> compareBy { it.size }
+    }
+    val ordered = if (ascending) primary.then(byName) else primary.reversed().then(byName)
+    // 폴더는 크기가 없으니 크기순일 땐 이름순으로
+    val dirOrder = if (key == com.kakario.comicviewer.data.SortKey.SIZE) {
+        if (ascending) byName else byName.reversed()
+    } else ordered
+    val dirs = filter { it.isDirectory }.sortedWith(dirOrder)
+    val files = filter { !it.isDirectory }.sortedWith(ordered)
+    return if (foldersFirst) dirs + files else files + dirs
+}

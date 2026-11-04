@@ -8,6 +8,8 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.produceState
 import androidx.compose.material3.TextButton
 import androidx.compose.foundation.background
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -63,6 +65,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.kakario.comicviewer.data.ProgressStore
+import com.kakario.comicviewer.data.SettingsStore
+import com.kakario.comicviewer.data.SortKey
+import com.kakario.comicviewer.model.NaturalOrder
+import com.kakario.comicviewer.model.sortedForShelf
 import com.kakario.comicviewer.model.FileEntry
 import com.kakario.comicviewer.model.UserFacingException
 import com.kakario.comicviewer.model.folderName
@@ -130,6 +136,13 @@ fun FolderBrowser(
         }
         onDispose { thumbs?.unwatchFolder(origin, path) }
     }
+
+    // ── 정렬 (설정에 저장 — FTP·내 폰 모두 같은 방식)
+    val settings = remember { SettingsStore(context) }
+    var sortKey by remember { mutableStateOf(settings.sortKey) }
+    var sortAsc by remember { mutableStateOf(settings.sortAscending) }
+    var foldersFirst by remember { mutableStateOf(settings.foldersFirst) }
+    var sortOpen by remember { mutableStateOf(false) }
 
     // ── 중복 검사
     val dup = remember { DupScanner.get(context) }
@@ -247,6 +260,9 @@ fun FolderBrowser(
                             color = if (watched) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                    TextButton(onClick = { sortOpen = true }) {
+                        Text("정렬", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                     StarButton(on = isFavorite(path), onClick = { toggle(path) })
                     IconButton(onClick = { reloadKey++ }) {
                         Icon(Icons.Filled.Refresh, contentDescription = "새로고침")
@@ -266,6 +282,9 @@ fun FolderBrowser(
 
                     is LoadState.Loaded -> {
                         val visible = s.entries.filter { it.isDirectory || it.isComicArchive }
+                            .sortedForShelf(sortKey, sortAsc, foldersFirst)
+                        // '다음 권'은 정렬과 상관없이 이름순(1권 → 2권)으로
+                        val bookOrder = s.entries.filter { it.isComicArchive }.sortedWith { a, b -> NaturalOrder.compare(a.name, b.name) }
                         if (visible.isEmpty()) {
                             Text(
                                 "이 폴더에는 하위 폴더나 ZIP 파일이 없어요",
@@ -289,7 +308,7 @@ fun FolderBrowser(
                                         onToggleFavorite = { toggle(entry.path) },
                                         onClick = {
                                             if (entry.isDirectory) onOpenDir(entry.path)
-                                            else onOpenArchive(entry, visible.filter { it.isComicArchive })
+                                            else onOpenArchive(entry, bookOrder)
                                         },
                                         onLongClick = { menuFor = entry },
                                     )
@@ -301,6 +320,20 @@ fun FolderBrowser(
             }
         }
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
+    }
+
+    // ── 정렬 창
+    if (sortOpen) {
+        SortDialog(
+            key = sortKey,
+            ascending = sortAsc,
+            foldersFirst = foldersFirst,
+            onChange = { k, asc, ff ->
+                sortKey = k; sortAsc = asc; foldersFirst = ff
+                settings.sortKey = k; settings.sortAscending = asc; settings.foldersFirst = ff
+            },
+            onClose = { sortOpen = false },
+        )
     }
 
     // ── 중복 검사 창들
@@ -595,6 +628,7 @@ private fun ShelfTile(
             }
             if (entry.isComicArchive) {
                 ReadBadge(origin, entry, Modifier.align(Alignment.BottomCenter))
+                NewDot(origin, entry, Modifier.align(Alignment.TopEnd))
             }
             if (entry.isDirectory) {
                 Box(
@@ -625,6 +659,29 @@ private fun ShelfTile(
             modifier = Modifier.padding(horizontal = 2.dp),
         )
     }
+}
+
+/** 새 만화 표시: 올라온 지 한 달이 안 됐고 아직 안 본 책이면 표지 오른쪽 위에 빨간 점. */
+@Composable
+private fun NewDot(origin: ThumbOrigin, entry: FileEntry, modifier: Modifier) {
+    if (entry.modified <= 0L) return
+    val age = System.currentTimeMillis() - entry.modified
+    if (age > 30L * 24 * 60 * 60 * 1000) return
+    val ctx = LocalContext.current
+    val store = remember { ProgressStore.get(ctx) }
+    val version = store.version
+    val seen = remember(version, entry.path, entry.size) { store.get(store.keyFor(origin, entry)).started }
+    if (seen) return
+    Box(
+        modifier
+            .padding(6.dp)
+            .size(12.dp)
+            .clip(CircleShape)
+            .background(Color.White)
+            .padding(2.dp)
+            .clip(CircleShape)
+            .background(Color(0xFFE53935))
+    )
 }
 
 /** 표지 아래쪽: 읽은 만큼 빨간 막대, 다 읽었으면 '다 읽음' 표시. */
@@ -753,4 +810,57 @@ fun ErrorView(message: String, onRetry: () -> Unit, modifier: Modifier = Modifie
         Spacer(Modifier.height(16.dp))
         Button(onClick = onRetry) { Text("다시 시도") }
     }
+}
+
+/** 정렬 창: 폴더 위치 · 기준 · 순서 — 누르는 즉시 적용. */
+@Composable
+private fun SortDialog(
+    key: SortKey,
+    ascending: Boolean,
+    foldersFirst: Boolean,
+    onChange: (SortKey, Boolean, Boolean) -> Unit,
+    onClose: () -> Unit,
+) {
+    @Composable
+    fun Choice(label: String, selected: Boolean, onClick: () -> Unit) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .clickable(onClick = onClick)
+                .padding(vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            androidx.compose.material3.RadioButton(selected = selected, onClick = onClick)
+            Text(label, style = MaterialTheme.typography.bodyLarge)
+        }
+    }
+    @Composable
+    fun Section(title: String) {
+        Text(
+            title,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(top = 10.dp, bottom = 2.dp),
+        )
+    }
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text("정렬") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Section("폴더 위치")
+                Choice("폴더를 위로", foldersFirst) { onChange(key, ascending, true) }
+                Choice("폴더를 아래로", !foldersFirst) { onChange(key, ascending, false) }
+                Section("정렬 기준")
+                SortKey.entries.forEach { k ->
+                    Choice(k.label, k == key) { onChange(k, ascending, foldersFirst) }
+                }
+                Section("순서")
+                Choice("${key.ascLabel} ↑", ascending) { onChange(key, true, foldersFirst) }
+                Choice("${key.descLabel} ↓", !ascending) { onChange(key, false, foldersFirst) }
+            }
+        },
+        confirmButton = { TextButton(onClick = onClose) { Text("닫기") } },
+    )
 }

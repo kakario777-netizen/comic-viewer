@@ -16,6 +16,13 @@ enum class PageLayout(val label: String, val short: String) {
     AUTO("자동 (가로 화면·펼친 폴더블이면 두 장)", "자동"),
 }
 
+/** 책장 정렬 기준. */
+enum class SortKey(val label: String, val ascLabel: String, val descLabel: String) {
+    NAME("이름", "가 → 하 (1권부터)", "하 → 가"),
+    DATE("날짜·시간", "오래된 순", "최신 순"),
+    SIZE("크기", "작은 순", "큰 순"),
+}
+
 class SettingsStore(context: Context) {
     private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
@@ -89,5 +96,25 @@ class SettingsStore(context: Context) {
         get() = prefs.getBoolean("double_tap_zoom", false)
         set(value) {
             prefs.edit().putBoolean("double_tap_zoom", value).apply()
+        }
+
+    var sortKey: SortKey
+        get() = prefs.getString("sort_key", null)
+            ?.let { n -> SortKey.entries.firstOrNull { it.name == n } } ?: SortKey.NAME
+        set(value) {
+            prefs.edit().putString("sort_key", value.name).apply()
+        }
+
+    var sortAscending: Boolean
+        get() = prefs.getBoolean("sort_asc", true)
+        set(value) {
+            prefs.edit().putBoolean("sort_asc", value).apply()
+        }
+
+    /** 폴더를 위에(true) / 아래에(false) */
+    var foldersFirst: Boolean
+        get() = prefs.getBoolean("folders_first", true)
+        set(value) {
+            prefs.edit().putBoolean("folders_first", value).apply()
         }
 }
