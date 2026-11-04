@@ -444,14 +444,14 @@ private fun ViewerOverlay(
                     .fillMaxWidth()
                     .background(OverlayBg)
                     .windowInsetsPadding(WindowInsets.navigationBars)
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                    .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 14.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 var dragging by remember { mutableStateOf<Float?>(null) }
                 val label = dragging?.let { "${it.roundToInt()}" }
                     ?: spread.joinToString("-") { "${it + 1}" }
                 Text("$label / $pageCount", color = Color.White, style = MaterialTheme.typography.titleMedium)
-                Slider(
+                PageSlider(
                     value = dragging ?: (spread.first() + 1).toFloat(),
                     onValueChange = { dragging = it },
                     onValueChangeFinished = {
@@ -459,10 +459,6 @@ private fun ViewerOverlay(
                         dragging = null
                     },
                     valueRange = 1f..pageCount.coerceAtLeast(2).toFloat(),
-                    colors = SliderDefaults.colors(
-                        thumbColor = MaterialTheme.colorScheme.primary,
-                        activeTrackColor = MaterialTheme.colorScheme.primary,
-                    ),
                     // 오른쪽→왼쪽으로 읽을 때는 막대도 뒤집는다
                     modifier = Modifier.graphicsLayer { scaleX = if (prefs.rightToLeft) -1f else 1f },
                 )

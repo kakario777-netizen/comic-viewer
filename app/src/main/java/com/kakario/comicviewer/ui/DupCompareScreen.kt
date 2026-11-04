@@ -260,7 +260,8 @@ private fun CompareContent(
         // ── 아래: 여러 장 한 번에 넘기는 막대
         var dragging by remember { mutableStateOf<Float?>(null) }
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+            // 내비게이션바와 붙지 않게 아래로 여유를 더 둔다
+            Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
@@ -269,7 +270,7 @@ private fun CompareContent(
                 style = MaterialTheme.typography.labelLarge,
                 modifier = Modifier.width(72.dp),
             )
-            Slider(
+            PageSlider(
                 value = dragging ?: (pager.currentPage + 1).toFloat(),
                 onValueChange = { dragging = it },
                 onValueChangeFinished = {
