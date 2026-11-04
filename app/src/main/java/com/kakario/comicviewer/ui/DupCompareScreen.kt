@@ -335,7 +335,7 @@ private fun Pane(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    "${if (count != null) "${(page + 1).coerceAtMost(count)}/$count쪽" else "…"} · ${sizeText(print.size)}",
+                    "${if (count != null) "${(page + 1).coerceAtMost(count)}/${count}쪽" else "…"} · ${sizeText(print.size)}",
                     color = Color.White.copy(alpha = 0.7f),
                     style = MaterialTheme.typography.labelSmall,
                 )
