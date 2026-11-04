@@ -44,6 +44,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import com.kakario.comicviewer.dup.DupScanner
 import com.kakario.comicviewer.dup.FolderDiff
+import com.kakario.comicviewer.dup.DupGroup
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -137,11 +138,19 @@ fun FolderBrowser(
     var dupMenu by remember { mutableStateOf(false) }
     var updateDiff by remember { mutableStateOf<FolderDiff?>(null) }
     var progressHidden by remember { mutableStateOf(false) }
+    // 처리 안 한 중복 묶음 (null = 아직 검사한 적 없음)
+    var pending by remember(dupKey) { mutableStateOf<List<DupGroup>?>(null) }
+    var pendingLoading by remember { mutableStateOf(false) }
+    var pendingRefresh by remember { mutableIntStateOf(0) }
+    var savedNote by remember { mutableStateOf<String?>(null) }
+    var comparing by remember { mutableStateOf<DupGroup?>(null) }
+    val presentZips = loaded?.filter { it.isComicArchive }?.associateBy { it.name }
+
     // 중복 검사 폴더에 들어오면 기록과 비교 → 새 자료가 있으면 물어본다
     LaunchedEffect(dupKey, loaded, watched) {
         updateDiff = null
         if (!watched || loaded == null) return@LaunchedEffect
-        if (dup.isSnoozed(origin, path, loaded)) return@LaunchedEffect
+        if (dup.isMuted(origin, path, loaded)) return@LaunchedEffect // '보지 않음' — 다음 갱신 전까지
         val running = dupState
         if (running is DupScanner.State.Running && running.key == dupKey) return@LaunchedEffect
         val d = try {
@@ -152,6 +161,30 @@ fun FolderBrowser(
             null
         }
         if (d != null && d.hasNew) updateDiff = d
+    }
+    // 처리 안 한 중복 수 (버튼 옆 숫자) — 검사 폴더이거나 창을 열었을 때만 읽음
+    LaunchedEffect(dupKey, loaded, watched, dupMenu, pendingRefresh) {
+        if (loaded == null || (!watched && !dupMenu)) return@LaunchedEffect
+        pendingLoading = pending == null
+        pending = try {
+            dup.pending(origin, path, presentZips?.keys)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        }
+        pendingLoading = false
+    }
+    // 검사가 끝나면 결과(처리할 목록) 창을 띄운다
+    LaunchedEffect(dupState) {
+        val ds = dupState
+        if (ds is DupScanner.State.Done && ds.key == dupKey) {
+            savedNote = if (ds.savedInFolder) "ZIP ${ds.checked}개 확인 · 기록은 폴더 안 숨김 파일에 저장"
+            else "ZIP ${ds.checked}개 확인 · 폴더에 쓸 권한이 없어 기록은 폰에 저장"
+            dup.dismissResult()
+            pendingRefresh++
+            dupMenu = true
+        }
     }
     fun startDupScan() {
         val list = loaded ?: return
@@ -193,7 +226,11 @@ fun FolderBrowser(
                 actions = {
                     TextButton(onClick = { dupMenu = true }) {
                         Text(
-                            if (watched) "중복✓" else "중복",
+                            when {
+                                (pending?.size ?: 0) > 0 -> "중복 ${pending!!.size}"
+                                watched -> "중복✓"
+                                else -> "중복"
+                            },
                             style = MaterialTheme.typography.labelLarge,
                             color = if (watched) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -255,20 +292,61 @@ fun FolderBrowser(
     }
 
     // ── 중복 검사 창들
-    if (dupMenu) {
-        DupMenuDialog(
+    if (dupMenu && comparing == null) {
+        DupPendingDialog(
             folderLabel = folderName(path),
+            pending = pending,
+            loading = pendingLoading,
+            savedNote = savedNote,
             watched = watched,
             onWatchChange = {
                 watched = it
                 dup.setWatched(origin, path, it)
-                toast(if (it) "중복 검사 폴더로 지정했어요 — 새 자료가 들어오면 알려드려요" else "중복 검사 폴더에서 뺐어요")
             },
             onScanNow = {
                 dupMenu = false
                 startDupScan()
             },
-            onDismiss = { dupMenu = false },
+            onCompare = { comparing = it },
+            onIgnore = { g ->
+                scope.launch {
+                    dup.ignore(origin, path, g)
+                    pendingRefresh++
+                    toast("무시했어요 — 이 묶음에 새 파일이 생기면 다시 보여요")
+                }
+            },
+            onClose = {
+                dupMenu = false
+                savedNote = null
+            },
+        )
+    }
+    comparing?.let { g ->
+        DupCompareScreen(
+            origin = origin,
+            group = g,
+            files = presentZips.orEmpty(),
+            onDelete = { b ->
+                val target = presentZips?.get(b.name)
+                if (target != null) {
+                    currentDelete(target)
+                    progressStore.clear(progressStore.keyFor(origin, target))
+                }
+                dup.forget(origin, path, b.name)
+                reloadKey++
+            },
+            onIgnore = {
+                comparing = null
+                scope.launch {
+                    dup.ignore(origin, path, g)
+                    pendingRefresh++
+                    toast("무시했어요")
+                }
+            },
+            onClose = {
+                comparing = null
+                pendingRefresh++
+            },
         )
     }
     updateDiff?.let { d ->
@@ -278,9 +356,11 @@ fun FolderBrowser(
                 updateDiff = null
                 startDupScan()
             },
-            onLater = {
+            onLater = { updateDiff = null }, // 다음에 들어오면 다시 물어봄
+            onMute = {
                 updateDiff = null
-                loaded?.let { dup.snooze(origin, path, it) }
+                loaded?.let { dup.mute(origin, path, it) }
+                toast("다음 자료 갱신 전까지 묻지 않을게요")
             },
         )
     }
@@ -295,36 +375,6 @@ fun FolderBrowser(
                 onCancel = { dup.cancel() },
             )
         }
-        is DupScanner.State.Done -> if (ds.key == dupKey) {
-            DupResultDialog(
-                state = ds,
-                onOpen = { b ->
-                    val zips = loaded.orEmpty().filter { it.isComicArchive }
-                    zips.firstOrNull { it.name == b.name }?.let { onOpenArchive(it, zips) }
-                },
-                onDelete = { b ->
-                    val target = loaded.orEmpty().firstOrNull { it.name == b.name }
-                    if (target == null) {
-                        dup.forget(origin, path, b.name)
-                    } else {
-                        scope.launch {
-                            try {
-                                currentDelete(target)
-                                progressStore.clear(progressStore.keyFor(origin, target))
-                                dup.forget(origin, path, b.name)
-                                toast("삭제했어요")
-                                reloadKey++
-                            } catch (e: CancellationException) {
-                                throw e
-                            } catch (e: Exception) {
-                                toast(e.message ?: "삭제하지 못했어요")
-                            }
-                        }
-                    }
-                },
-                onClose = { dup.dismissResult() },
-            )
-        }
         is DupScanner.State.Failed -> if (ds.key == dupKey) {
             AlertDialog(
                 onDismissRequest = { dup.dismissResult() },
@@ -333,7 +383,7 @@ fun FolderBrowser(
                 confirmButton = { TextButton(onClick = { dup.dismissResult() }) { Text("확인") } },
             )
         }
-        DupScanner.State.Idle -> Unit
+        else -> Unit
     }
 
     // ── 길게 누르기 메뉴

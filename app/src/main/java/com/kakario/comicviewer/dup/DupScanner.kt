@@ -15,6 +15,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.RandomAccessFile
@@ -38,10 +40,10 @@ class DupScanner private constructor(context: Context) {
     sealed interface State {
         data object Idle : State
         data class Running(val key: String, val label: String, val done: Int, val total: Int) : State
+        /** 검사 끝 — 결과는 pending()으로 다시 읽는다. */
         data class Done(
             val key: String,
             val label: String,
-            val groups: List<DupGroup>,
             val checked: Int,
             val savedInFolder: Boolean,
         ) : State
@@ -52,8 +54,8 @@ class DupScanner private constructor(context: Context) {
     val state: StateFlow<State> = _state
     private var job: Job? = null
 
-    /** '나중에'를 누른 폴더 — 같은 목록이면 앱을 켜 있는 동안 다시 묻지 않음. */
-    private val snoozed = ConcurrentHashMap<String, Int>()
+    /** 기록 파일을 고칠 때 한 번에 하나씩 (검사·무시·삭제가 겹쳐도 내용이 안 꼬이게). */
+    private val indexLock = Mutex()
 
     fun keyOf(origin: ThumbOrigin, path: String) = "${origin.tag}|${path.trimEnd('/')}"
 
@@ -73,15 +75,16 @@ class DupScanner private constructor(context: Context) {
     /** 폴더 목록을 기록과 비교한다. 기록이 아예 없으면 전부 새 파일로 본다. */
     suspend fun checkChanges(origin: ThumbOrigin, path: String, entries: List<FileEntry>): FolderDiff {
         val zips = entries.filter { it.isComicArchive }
-        val index = readIndex(origin, path).first ?: emptyMap()
+        val index = readIndex(origin, path).first?.prints ?: emptyMap()
         return DupLogic.diff(index, zips.map { Triple(it.name, it.size, it.modified) })
     }
 
-    fun isSnoozed(origin: ThumbOrigin, path: String, entries: List<FileEntry>): Boolean =
-        snoozed[keyOf(origin, path)] == listingHash(entries)
+    /** '보지 않음'을 누른 상태인지 — 폴더 목록이 다시 바뀌면(다음 갱신) 풀린다. */
+    fun isMuted(origin: ThumbOrigin, path: String, entries: List<FileEntry>): Boolean =
+        prefs.getInt("mute|" + keyOf(origin, path), 0) == listingHash(entries)
 
-    fun snooze(origin: ThumbOrigin, path: String, entries: List<FileEntry>) {
-        snoozed[keyOf(origin, path)] = listingHash(entries)
+    fun mute(origin: ThumbOrigin, path: String, entries: List<FileEntry>) {
+        prefs.edit().putInt("mute|" + keyOf(origin, path), listingHash(entries)).apply()
     }
 
     private fun listingHash(entries: List<FileEntry>): Int =
@@ -93,11 +96,11 @@ class DupScanner private constructor(context: Context) {
     fun scan(origin: ThumbOrigin, path: String, label: String, entries: List<FileEntry>) {
         job?.cancel()
         val key = keyOf(origin, path)
-        snoozed.remove(key)
         job = scope.launch {
             try {
                 val zips = entries.filter { it.isComicArchive }
-                val old = readIndex(origin, path).first ?: emptyMap()
+                val oldIndex = readIndex(origin, path).first
+                val old = oldIndex?.prints ?: emptyMap()
                 val prints = ArrayList<BookPrint>(zips.size)
                 _state.value = State.Running(key, label, 0, zips.size)
                 zips.forEachIndexed { i, e ->
@@ -118,8 +121,12 @@ class DupScanner private constructor(context: Context) {
                     }
                     _state.value = State.Running(key, label, i + 1, zips.size)
                 }
-                val inFolder = writeIndex(origin, path, prints)
-                _state.value = State.Done(key, label, DupLogic.group(prints), prints.size, inFolder)
+                val inFolder = indexLock.withLock {
+                    // 검사하는 사이 '무시'한 것도 잃지 않도록 최신 무시 목록을 다시 읽어 합친다
+                    val ignored = (readIndex(origin, path).first?.ignored ?: emptySet()) + (oldIndex?.ignored ?: emptySet())
+                    writeIndex(origin, path, prints, ignored)
+                }
+                _state.value = State.Done(key, label, prints.size, inFolder)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 _state.value = State.Idle
                 throw e
@@ -138,24 +145,40 @@ class DupScanner private constructor(context: Context) {
         if (_state.value !is State.Running) _state.value = State.Idle
     }
 
-    /** 결과 창에서 파일을 지웠을 때 — 결과와 기록에서도 뺀다. */
-    fun forget(origin: ThumbOrigin, path: String, name: String) {
-        val st = _state.value
-        if (st is State.Done && st.key == keyOf(origin, path)) {
-            val groups = st.groups.map { g -> g.copy(items = g.items.filter { it.name != name }) }
-                .filter { it.items.size >= 2 }
-            _state.value = st.copy(groups = groups)
-        }
-        scope.launch {
+    /**
+     * 아직 처리하지 않은 중복 묶음 (삭제·무시 안 한 것).
+     * 기록이 아예 없으면(한 번도 검사 안 함) null.
+     * presentNames를 주면 지금 폴더에 실제로 있는 파일만 따진다.
+     */
+    suspend fun pending(origin: ThumbOrigin, path: String, presentNames: Set<String>?): List<DupGroup>? {
+        val index = readIndex(origin, path).first ?: return null
+        val prints = index.prints.values.filter { presentNames == null || it.name in presentNames }
+        return DupLogic.group(prints).filter { it.signature !in index.ignored }
+    }
+
+    /** 묶음 하나를 '무시' — 같은 파일 묶음이면 다시 안 보인다 (새 파일이 끼면 다시 보임). */
+    suspend fun ignore(origin: ThumbOrigin, path: String, group: DupGroup) {
+        indexLock.withLock {
             val (index, _) = readIndex(origin, path)
-            if (index != null && name in index) writeIndex(origin, path, index.values.filter { it.name != name })
+            val prints = index?.prints?.values ?: return
+            writeIndex(origin, path, prints, index.ignored + group.signature)
+        }
+    }
+
+    /** 파일을 지웠을 때 — 기록에서도 뺀다. */
+    suspend fun forget(origin: ThumbOrigin, path: String, name: String) {
+        indexLock.withLock {
+            val (index, _) = readIndex(origin, path)
+            if (index != null && name in index.prints) {
+                writeIndex(origin, path, index.prints.values.filter { it.name != name }, index.ignored)
+            }
         }
     }
 
     // ───── 기록 파일 (폴더 안 숨김 파일 → 안 되면 폰 안)
 
     /** (기록, 폴더 안에서 읽었는지) */
-    private suspend fun readIndex(origin: ThumbOrigin, path: String): Pair<Map<String, BookPrint>?, Boolean> {
+    private suspend fun readIndex(origin: ThumbOrigin, path: String): Pair<DupIndex?, Boolean> {
         val target = joinPath(path, DupLogic.INDEX_FILE)
         val server = origin.server
         val inFolder = try {
@@ -172,8 +195,13 @@ class DupScanner private constructor(context: Context) {
     }
 
     /** 폴더에 숨김 파일로 쓴다. 안 되면 폰 안에 저장하고 false. */
-    private suspend fun writeIndex(origin: ThumbOrigin, path: String, prints: Collection<BookPrint>): Boolean {
-        val data = DupLogic.encode(prints)
+    private suspend fun writeIndex(
+        origin: ThumbOrigin,
+        path: String,
+        prints: Collection<BookPrint>,
+        ignored: Set<String>,
+    ): Boolean {
+        val data = DupLogic.encode(prints, ignored)
         val target = joinPath(path, DupLogic.INDEX_FILE)
         val server = origin.server
         val ok = try {

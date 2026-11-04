@@ -16,8 +16,15 @@ data class BookPrint(
     val pages: Int,
 )
 
+/** 숨김 기록 파일 내용: 파일별 기록 + '무시'한 묶음들. */
+data class DupIndex(val prints: Map<String, BookPrint>, val ignored: Set<String>)
+
 /** 중복으로 묶인 파일들. */
 data class DupGroup(val reason: Reason, val items: List<BookPrint>) {
+    /** 묶음을 구별하는 값 — 무시 목록에 저장. 파일이 하나라도 새로 끼면 달라져서 다시 보인다. */
+    val signature: String
+        get() = reason.name + "|" + items.map { it.name }.sorted().joinToString("\u0001")
+
     enum class Reason(val label: String) {
         SAME_CONTENT("내용이 똑같은 파일"),
         SAME_VOLUME("같은 권으로 보이는 파일"),
@@ -112,12 +119,14 @@ object DupLogic {
 
     // ───── 기록 파일 읽기/쓰기 (JSON)
 
-    fun decode(bytes: ByteArray?): Map<String, BookPrint>? {
+    fun decode(bytes: ByteArray?): DupIndex? {
         if (bytes == null || bytes.isEmpty()) return null
         return try {
             val o = JSONObject(String(bytes, Charsets.UTF_8))
             val arr = o.getJSONArray("files")
-            (0 until arr.length()).associate { i ->
+            val ign = o.optJSONArray("ignored")
+            val ignored = if (ign == null) emptySet() else (0 until ign.length()).map { ign.getString(it) }.toSet()
+            val prints = (0 until arr.length()).associate { i ->
                 val f = arr.getJSONObject(i)
                 val p = BookPrint(
                     name = f.getString("n"),
@@ -128,12 +137,13 @@ object DupLogic {
                 )
                 p.name to p
             }
+            DupIndex(prints, ignored)
         } catch (e: Exception) {
             null
         }
     }
 
-    fun encode(prints: Collection<BookPrint>): ByteArray {
+    fun encode(prints: Collection<BookPrint>, ignored: Set<String> = emptySet()): ByteArray {
         val arr = JSONArray()
         prints.sortedWith(byName).forEach { p ->
             arr.put(
@@ -150,6 +160,7 @@ object DupLogic {
             .put("v", 1)
             .put("updated", System.currentTimeMillis())
             .put("files", arr)
+            .put("ignored", JSONArray(ignored.sorted()))
             .toString()
             .toByteArray(Charsets.UTF_8)
     }
