@@ -554,7 +554,9 @@ private fun EndCard(
             Modifier.padding(32.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text("다 읽었어요 📖", color = Color.White, style = MaterialTheme.typography.headlineSmall)
+            AppIcon(AppIcons.Book, size = 48.dp, tint = Color.White.copy(alpha = 0.8f))
+            Spacer(Modifier.height(10.dp))
+            Text("다 읽었어요", color = Color.White, style = MaterialTheme.typography.headlineSmall)
             Spacer(Modifier.height(6.dp))
             Text(
                 entry.name,

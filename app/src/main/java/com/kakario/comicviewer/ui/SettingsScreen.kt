@@ -330,7 +330,7 @@ private fun BatteryRow() {
     ) {
         Column(Modifier.weight(1f)) {
             Text(
-                if (exempt) "배터리 최적화 예외: 켜짐 ✓" else "배터리 최적화 예외: 꺼짐",
+                if (exempt) "배터리 최적화 예외: 켜짐" else "배터리 최적화 예외: 꺼짐",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onBackground,
             )

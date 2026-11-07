@@ -53,7 +53,7 @@ fun FavoritesScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.padding(32.dp),
             ) {
-                Text("⭐", style = MaterialTheme.typography.displayMedium)
+                AppIcon(AppIcons.Favorite, size = 56.dp, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(12.dp))
                 Text(
                     "즐겨찾기한 폴더가 없어요",
@@ -62,7 +62,7 @@ fun FavoritesScreen(
                 )
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "FTP나 내 폰 탭에서 폴더 옆 ☆를 누르면\n여기에 모여서 바로 열 수 있어요",
+                    "FTP나 내 폰 탭에서 폴더의 별 아이콘을 누르면\n여기에 모여서 바로 열 수 있어요",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
@@ -86,13 +86,14 @@ fun FavoritesScreen(
             }
             items(favorites, key = { it.id }) { fav ->
                 val server = servers.firstOrNull { it.id == fav.serverId }
-                val source = if (fav.isLocal) "📱 내 폰" else "🗄️ " + (server?.name ?: "알 수 없는 서버")
+                val source = if (fav.isLocal) "내 폰" else (server?.name ?: "알 수 없는 서버")
                 FavoriteTile(
                     origin = ThumbOrigin(server),
                     entry = FileEntry(fav.name, fav.path, isDirectory = true, size = 0),
                     showCover = false, // 즐겨찾기 폴더는 표지 없이 폴더 아이콘으로
                     name = fav.name,
                     source = source,
+                    sourceIcon = if (fav.isLocal) AppIcons.Phone else AppIcons.Server,
                     onClick = { onOpen(fav) },
                     onLongClick = { removing = fav },
                 )
@@ -124,6 +125,7 @@ private fun FavoriteTile(
     showCover: Boolean,
     name: String,
     source: String,
+    sourceIcon: androidx.compose.ui.graphics.vector.ImageVector,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
 ) {
@@ -148,7 +150,7 @@ private fun FavoriteTile(
                     .background(MaterialTheme.colorScheme.surface),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("📁", style = MaterialTheme.typography.displayMedium)
+                AppIcon(AppIcons.Folder, size = 48.dp, tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         Spacer(Modifier.height(8.dp))
@@ -160,13 +162,19 @@ private fun FavoriteTile(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(horizontal = 4.dp),
         )
-        Text(
-            source,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+        androidx.compose.foundation.layout.Row(
             modifier = Modifier.padding(horizontal = 4.dp),
-        )
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            AppIcon(sourceIcon, size = 14.dp, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.padding(start = 4.dp))
+            Text(
+                source,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }

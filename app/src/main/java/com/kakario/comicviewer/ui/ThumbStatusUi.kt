@@ -84,11 +84,7 @@ fun ThumbStatusBar(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.width(6.dp))
-            Text(
-                if (expanded) "▲" else "▼",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            AppIcon(if (expanded) AppIcons.Up else AppIcons.Down, size = 18.dp, tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

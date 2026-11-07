@@ -125,7 +125,7 @@ private val NEW_SERVER = FtpServer(0, "", "", 21, "", "", "UTF-8")
 private fun EmptyServers(modifier: Modifier = Modifier) {
     Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("🗄️", style = MaterialTheme.typography.displayMedium)
+            AppIcon(AppIcons.Server, size = 56.dp, tint = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(12.dp))
             Text(
                 "등록된 FTP 서버가 없어요",
@@ -160,7 +160,7 @@ private fun ServerCard(
             modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("🗄️", style = MaterialTheme.typography.headlineSmall)
+            AppIcon(AppIcons.Server, size = 28.dp, tint = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.padding(start = 12.dp))
             Column(Modifier.weight(1f)) {
                 Text(server.name, style = MaterialTheme.typography.titleMedium)

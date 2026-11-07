@@ -40,6 +40,8 @@ import com.kakario.comicviewer.data.SettingsStore
 import com.kakario.comicviewer.data.ThemeMode
 import com.kakario.comicviewer.thumb.ThumbnailLoader
 import com.kakario.comicviewer.ui.LocalThumbnails
+import com.kakario.comicviewer.ui.AppIcon
+import com.kakario.comicviewer.ui.AppIcons
 import com.kakario.comicviewer.ui.LocalOverlayHost
 import com.kakario.comicviewer.ui.OverlayHost
 import com.kakario.comicviewer.ui.LocalGridColumns
@@ -120,7 +122,7 @@ data class OpenBook(
         }
 }
 
-private val TABS = listOf("⭐ 즐겨찾기", "🗄️ FTP", "📱 내 폰")
+private val TABS = listOf("즐겨찾기", "FTP", "내 폰")
 private const val TAB_FAVORITES = 0
 private const val TAB_FTP = 1
 private const val TAB_LOCAL = 2
@@ -284,7 +286,20 @@ class MainActivity : ComponentActivity() {
                                     Tab(
                                         selected = tab == i,
                                         onClick = { tab = i },
-                                        text = { Text(label, maxLines = 1) },
+                                        text = {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                AppIcon(
+                                                    when (i) {
+                                                        TAB_FAVORITES -> AppIcons.Favorite
+                                                        TAB_FTP -> AppIcons.Server
+                                                        else -> AppIcons.Phone
+                                                    },
+                                                    size = 18.dp,
+                                                )
+                                                Spacer(Modifier.width(6.dp))
+                                                Text(label, maxLines = 1)
+                                            }
+                                        },
                                         unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }

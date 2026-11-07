@@ -15,6 +15,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.unit.dp
 import com.kakario.comicviewer.model.FileEntry
 import com.kakario.comicviewer.thumb.ThumbOrigin
 import com.kakario.comicviewer.thumb.ThumbnailLoader
@@ -23,7 +24,7 @@ import com.kakario.comicviewer.thumb.ThumbnailLoader
 val LocalThumbnails = compositionLocalOf<ThumbnailLoader?> { null }
 
 /**
- * 표지 썸네일. 불러오는 동안·표지가 없을 때는 아이콘(📁/📦)을 보여준다.
+ * 표지 썸네일. 불러오는 동안·표지가 없을 때는 폴더·책 아이콘을 보여준다.
  * 화면 밖으로 스크롤되면 불러오기를 자동으로 멈춘다.
  */
 @Composable
@@ -52,9 +53,10 @@ fun CoverImage(origin: ThumbOrigin, entry: FileEntry, modifier: Modifier = Modif
                 modifier = Modifier.fillMaxSize(),
             )
         } else {
-            Text(
-                if (entry.isDirectory) "📁" else "📦",
-                style = MaterialTheme.typography.displaySmall,
+            AppIcon(
+                if (entry.isDirectory) AppIcons.Folder else AppIcons.Book,
+                size = 36.dp,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }

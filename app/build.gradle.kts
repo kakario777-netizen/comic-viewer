@@ -30,6 +30,10 @@ android {
     buildTypes {
         debug {
             signingConfig = signingConfigs.getByName("debug")
+            // 안 쓰는 코드·아이콘 정리 (용량 줄이고 조금 더 빠르게)
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
 
@@ -54,6 +58,8 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-core")
+    // 테두리(외곽선) 아이콘 전체 — 안 쓰는 아이콘은 빌드 때 R8이 빼서 앱 용량은 거의 안 늘어남
+    implementation("androidx.compose.material:material-icons-extended")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     // FTP 접속 라이브러리 (Apache Commons Net)
     implementation("commons-net:commons-net:3.11.1")

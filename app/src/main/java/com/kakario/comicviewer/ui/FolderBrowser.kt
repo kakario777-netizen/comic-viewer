@@ -253,7 +253,7 @@ fun FolderBrowser(
                         Text(
                             when {
                                 (pending?.size ?: 0) > 0 -> "중복 ${pending!!.size}"
-                                watched -> "중복✓"
+                                watched -> "중복"
                                 else -> "중복"
                             },
                             style = MaterialTheme.typography.labelLarge,
@@ -472,21 +472,21 @@ fun FolderBrowser(
                         Spacer(Modifier.height(8.dp))
                         HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
                         Spacer(Modifier.height(4.dp))
-                        MenuItem("🖼️  표지 다시 만들기") {
+                        MenuItem("표지 다시 만들기", icon = AppIcons.Image) {
                             menuFor = null
                             thumbs?.invalidate(origin, listOf(target))
                             toast("표지를 다시 만들어요")
                         }
-                        MenuItem("📖  읽은 진행률 초기화", enabled = started) {
+                        MenuItem("읽은 진행률 초기화", icon = AppIcons.Reset, enabled = started) {
                             menuFor = null
                             confirm = Confirm(target, ConfirmAction.RESET, 1)
                         }
-                        MenuItem("🗑️  파일 삭제", color = MaterialTheme.colorScheme.error) {
+                        MenuItem("파일 삭제", icon = AppIcons.Delete, color = MaterialTheme.colorScheme.error) {
                             menuFor = null
                             confirm = Confirm(target, ConfirmAction.DELETE, 1)
                         }
                     } else {
-                        MenuItem("🖼️  썸네일 갱신하기 (없는 표지만 만들기)") {
+                        MenuItem("썸네일 갱신하기 (없는 표지만 만들기)", icon = AppIcons.Image) {
                             menuFor = null
                             val added = thumbs?.requestFolder(origin, target.path, target.name) ?: false
                             toast(
@@ -495,7 +495,7 @@ fun FolderBrowser(
                             )
                         }
                         val fav = isFavorite(target.path)
-                        MenuItem(if (fav) "☆  즐겨찾기에서 빼기" else "⭐  즐겨찾기에 추가") {
+                        MenuItem(if (fav) "즐겨찾기에서 빼기" else "즐겨찾기에 추가", icon = if (fav) AppIcons.FavoriteOn else AppIcons.Favorite) {
                             menuFor = null
                             toggle(target.path)
                         }
@@ -591,24 +591,28 @@ private data class Confirm(val entry: FileEntry, val action: ConfirmAction, val 
 @Composable
 private fun MenuItem(
     text: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
     enabled: Boolean = true,
     color: Color = MaterialTheme.colorScheme.onSurface,
     onClick: () -> Unit,
 ) {
-    Text(
-        text,
-        color = if (enabled) color else color.copy(alpha = 0.35f),
-        style = MaterialTheme.typography.bodyLarge,
-        modifier = Modifier
+    val c = if (enabled) color else color.copy(alpha = 0.35f)
+    Row(
+        Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
             .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 14.dp),
-    )
+            .padding(horizontal = 8.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AppIcon(icon, size = 22.dp, tint = c)
+        Spacer(Modifier.width(14.dp))
+        Text(text, color = c, style = MaterialTheme.typography.bodyLarge)
+    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
-/** 책장의 한 칸: 표지 + 이름. 폴더는 왼쪽 아래 📁 표시와 오른쪽 위 즐겨찾기 별. */
+/** 책장의 한 칸: 표지 + 이름. 폴더는 폴더 아이콘과 오른쪽 위 즐겨찾기 별. */
 @Composable
 private fun ShelfTile(
     origin: ThumbOrigin,
@@ -634,7 +638,7 @@ private fun ShelfTile(
                     tileModifier.background(MaterialTheme.colorScheme.surface),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text("📁", style = MaterialTheme.typography.displaySmall)
+                    AppIcon(AppIcons.Folder, size = 40.dp, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             } else {
                 CoverImage(origin = origin, entry = entry, modifier = tileModifier)
@@ -654,10 +658,10 @@ private fun ShelfTile(
                         .clickable(onClick = onToggleFavorite),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text(
-                        if (favorite) "★" else "☆",
-                        color = if (favorite) StarColor else Color.White,
-                        style = MaterialTheme.typography.titleMedium,
+                    AppIcon(
+                        if (favorite) AppIcons.FavoriteOn else AppIcons.Favorite,
+                        size = 20.dp,
+                        tint = if (favorite) StarColor else Color.White,
                     )
                 }
             }
@@ -707,16 +711,18 @@ private fun ReadBadge(origin: ThumbOrigin, entry: FileEntry, modifier: Modifier)
     if (!p.started) return
     Box(modifier.fillMaxWidth()) {
         if (p.finished) {
-            Text(
-                "✓ 다 읽음",
-                color = Color.White,
-                style = MaterialTheme.typography.labelSmall,
-                modifier = Modifier
+            Row(
+                Modifier
                     .align(Alignment.BottomEnd)
                     .padding(6.dp)
                     .background(Color(0xCC2E7D32), RoundedCornerShape(6.dp))
                     .padding(horizontal = 5.dp, vertical = 1.dp),
-            )
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                AppIcon(AppIcons.Done, size = 12.dp, tint = Color.White)
+                Spacer(Modifier.width(3.dp))
+                Text("다 읽음", color = Color.White, style = MaterialTheme.typography.labelSmall)
+            }
         } else {
             Text(
                 "${p.percent}%",
@@ -797,10 +803,9 @@ fun BrowserHeader(
 @Composable
 fun StarButton(on: Boolean, onClick: () -> Unit) {
     IconButton(onClick = onClick) {
-        Text(
-            if (on) "★" else "☆",
-            style = MaterialTheme.typography.titleLarge,
-            color = if (on) StarColor else MaterialTheme.colorScheme.onSurfaceVariant,
+        AppIcon(
+            if (on) AppIcons.FavoriteOn else AppIcons.Favorite,
+            tint = if (on) StarColor else MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }
@@ -817,7 +822,7 @@ fun ErrorView(message: String, onRetry: () -> Unit, modifier: Modifier = Modifie
         modifier.padding(32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text("⚠️", style = MaterialTheme.typography.displaySmall)
+        AppIcon(AppIcons.Warning, size = 48.dp, tint = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(12.dp))
         Text(message, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onBackground)
         Spacer(Modifier.height(16.dp))
