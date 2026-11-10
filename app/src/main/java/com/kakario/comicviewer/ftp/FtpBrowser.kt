@@ -127,6 +127,47 @@ class FtpBrowser(private val server: FtpServer) {
         client.storeFile(path, ByteArrayInputStream(data))
     }
 
+    /** 폴더 만들기 (이미 있으면 그냥 통과). */
+    suspend fun makeDir(path: String): Boolean = ftp {
+        ensureConnected()
+        client.makeDirectory(path) || client.changeWorkingDirectory(path)
+    }
+
+    /** 이름 바꾸기·옮기기. */
+    suspend fun rename(from: String, to: String) = ftp {
+        ensureConnected()
+        if (!client.rename(from, to)) {
+            throw UserFacingException("옮기지 못했어요 (응답 ${client.replyCode}).\nFTP 계정에 쓰기 권한이 있는지 확인해 주세요.")
+        }
+    }
+
+    /** 스트림 내용을 서버에 파일로 올린다. */
+    suspend fun upload(path: String, input: java.io.InputStream): Boolean = ftp {
+        ensureConnected()
+        client.setRestartOffset(0)
+        client.storeFile(path, input)
+    }
+
+    /** offset부터 파일을 읽는 스트림을 열어 block에 넘긴다 (block이 끝나면 닫음). */
+    suspend fun <T> download(path: String, offset: Long, block: (java.io.InputStream) -> T): T = ftp {
+        ensureConnected()
+        client.setRestartOffset(offset)
+        val input = client.retrieveFileStream(path)
+            ?: throw UserFacingException("파일을 열 수 없어요 (응답 ${client.replyCode})")
+        try {
+            block(input)
+        } finally {
+            try { input.close() } catch (_: IOException) {}
+            try {
+                client.completePendingCommand()
+                if (client.noop() != 200) dropConnection()
+            } catch (_: IOException) {
+                dropConnection()
+            }
+            client.setRestartOffset(0)
+        }
+    }
+
     /** 서버에서 파일 하나를 지운다. */
     suspend fun delete(path: String) = ftp {
         ensureConnected()

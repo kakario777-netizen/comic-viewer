@@ -98,35 +98,7 @@ class DupScanner private constructor(context: Context) {
         val key = keyOf(origin, path)
         job = scope.launch {
             try {
-                val zips = entries.filter { it.isComicArchive }
-                val oldIndex = readIndex(origin, path).first
-                val old = oldIndex?.prints ?: emptyMap()
-                val prints = ArrayList<BookPrint>(zips.size)
-                _state.value = State.Running(key, label, 0, zips.size)
-                zips.forEachIndexed { i, e ->
-                    val prev = old[e.name]
-                    prints += if (DupLogic.upToDate(prev, e.size, e.modified)) {
-                        prev!!.copy(modified = e.modified)
-                    } else {
-                        val fp = try {
-                            withSource(origin, e) { src ->
-                                ZipCover.listEntries(src)?.let { DupLogic.fingerprint(it) }
-                            }
-                        } catch (ex: kotlinx.coroutines.CancellationException) {
-                            throw ex
-                        } catch (ex: Exception) {
-                            null
-                        }
-                        BookPrint(e.name, e.size, e.modified, fp?.first, fp?.second ?: 0)
-                    }
-                    _state.value = State.Running(key, label, i + 1, zips.size)
-                }
-                val inFolder = indexLock.withLock {
-                    // 검사하는 사이 '무시'한 것도 잃지 않도록 최신 무시 목록을 다시 읽어 합친다
-                    val ignored = (readIndex(origin, path).first?.ignored ?: emptySet()) + (oldIndex?.ignored ?: emptySet())
-                    writeIndex(origin, path, prints, ignored)
-                }
-                _state.value = State.Done(key, label, prints.size, inFolder)
+                runScan(origin, path, label, entries, silent = false)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 _state.value = State.Idle
                 throw e
@@ -134,6 +106,46 @@ class DupScanner private constructor(context: Context) {
                 _state.value = State.Failed(key, "중복 검사 중 문제가 생겼어요: ${e.message ?: e.javaClass.simpleName}")
             }
         }
+    }
+
+    /** 조용히 검사했을 때 화면의 '중복 N' 숫자를 다시 읽게 하는 신호. */
+    val changes = MutableStateFlow(0)
+
+    /**
+     * 중복 검사 본체. silent = true면 진행 창·결과 창 없이 기록만 갱신한다
+     * (썸네일 갱신이 끝난 뒤 자동으로 이어서 돌릴 때).
+     */
+    suspend fun runScan(origin: ThumbOrigin, path: String, label: String, entries: List<FileEntry>, silent: Boolean) {
+        val key = keyOf(origin, path)
+        val zips = entries.filter { it.isComicArchive }
+        val oldIndex = readIndex(origin, path).first
+        val old = oldIndex?.prints ?: emptyMap()
+        val prints = ArrayList<BookPrint>(zips.size)
+        if (!silent) _state.value = State.Running(key, label, 0, zips.size)
+        zips.forEachIndexed { i, e ->
+            val prev = old[e.name]
+            prints += if (DupLogic.upToDate(prev, e.size, e.modified)) {
+                prev!!.copy(modified = e.modified)
+            } else {
+                val fp = try {
+                    withSource(origin, e) { src ->
+                        ZipCover.listEntries(src)?.let { DupLogic.fingerprint(it) }
+                    }
+                } catch (ex: kotlinx.coroutines.CancellationException) {
+                    throw ex
+                } catch (ex: Exception) {
+                    null
+                }
+                BookPrint(e.name, e.size, e.modified, fp?.first, fp?.second ?: 0)
+            }
+            if (!silent) _state.value = State.Running(key, label, i + 1, zips.size)
+        }
+        val inFolder = indexLock.withLock {
+            // 검사하는 사이 '무시'한 것도 잃지 않도록 최신 무시 목록을 다시 읽어 합친다
+            val ignored = (readIndex(origin, path).first?.ignored ?: emptySet()) + (oldIndex?.ignored ?: emptySet())
+            writeIndex(origin, path, prints, ignored)
+        }
+        if (silent) changes.value++ else _state.value = State.Done(key, label, prints.size, inFolder)
     }
 
     fun cancel() {

@@ -4,6 +4,8 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import com.kakario.comicviewer.dup.DupScanner
+import com.kakario.comicviewer.fix.ArchiveDoctor
 import com.kakario.comicviewer.thumb.ThumbWorkService
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Column
@@ -138,6 +140,19 @@ class MainActivity : ComponentActivity() {
         val favoriteStore = FavoriteStore(applicationContext)
         val settingsStore = SettingsStore(applicationContext)
         thumbnails = ThumbnailLoader.get(applicationContext)
+        // 썸네일 갱신이 끝난 폴더는 이어서 차례로: 중복 확인(중복 검사 폴더만) → 표지 안 나온 파일 압축 오류 확인
+        thumbnails.onFolderDone = { origin, path, label, zips, failed ->
+            val dup = DupScanner.get(applicationContext)
+            if (zips.isNotEmpty() && dup.isWatched(origin, path)) {
+                thumbnails.setPhase("중복 확인 중")
+                runCatching { dup.runScan(origin, path, label, zips, silent = true) }
+                    .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
+            }
+            if (failed.isNotEmpty()) {
+                thumbnails.setPhase("압축 오류 확인 중")
+                ArchiveDoctor.get(applicationContext).check(origin, path, label, failed, manual = false)
+            }
+        }
 
         setContent {
             var themeMode by remember { mutableStateOf(settingsStore.themeMode) }

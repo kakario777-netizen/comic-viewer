@@ -71,7 +71,7 @@ fun ThumbStatusBar(
             )
             Spacer(Modifier.width(10.dp))
             Text(
-                "'${st.current.label}' 썸네일 갱신 중",
+                "'${st.current.label}' ${st.phase}",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,

@@ -119,7 +119,7 @@ class ThumbWorkService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val cur = st?.current
-        val title = cur?.let { "'${it.label}' 썸네일 갱신 중" } ?: "썸네일 갱신 준비 중"
+        val title = cur?.let { "'${it.label}' ${st.phase}" } ?: "썸네일 갱신 준비 중"
         val text = buildString {
             if (cur != null) append("${cur.done}/${cur.total ?: "?"}")
             if (st != null && st.waiting.isNotEmpty()) append(" · 대기 ${st.waiting.size}개")

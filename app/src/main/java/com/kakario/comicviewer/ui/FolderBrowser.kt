@@ -46,6 +46,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import com.kakario.comicviewer.dup.DupScanner
+import com.kakario.comicviewer.fix.ArchiveDoctor
 import com.kakario.comicviewer.dup.FolderDiff
 import com.kakario.comicviewer.dup.DupGroup
 import androidx.compose.runtime.compositionLocalOf
@@ -132,7 +133,7 @@ fun FolderBrowser(
     val loaded = (state as? LoadState.Loaded)?.entries
     DisposableEffect(thumbs, origin, path, loaded != null) {
         if (thumbs != null && loaded != null && loaded.any { it.isComicArchive }) {
-            thumbs.watchFolder(origin, path, folderName(path), loaded.count { it.isComicArchive })
+            thumbs.watchFolder(origin, path, folderName(path), loaded)
         }
         onDispose { thumbs?.unwatchFolder(origin, path) }
     }
@@ -177,7 +178,8 @@ fun FolderBrowser(
         if (d != null && d.hasNew) updateDiff = d
     }
     // 처리 안 한 중복 수 (버튼 옆 숫자) — 검사 폴더이거나 창을 열었을 때만 읽음
-    LaunchedEffect(dupKey, loaded, watched, dupMenu, pendingRefresh) {
+    val dupChanges by dup.changes.collectAsState() // 자동(조용한) 중복 확인이 끝나면 숫자 다시 읽기
+    LaunchedEffect(dupKey, loaded, watched, dupMenu, pendingRefresh, dupChanges) {
         if (loaded == null || (!watched && !dupMenu)) return@LaunchedEffect
         pendingLoading = pending == null
         pending = try {
@@ -209,6 +211,30 @@ fun FolderBrowser(
         pending = pending
             ?.map { g -> g.copy(items = g.items.filter { it.name != name }) }
             ?.filter { it.items.size >= 2 }
+    }
+
+    // ── 압축 오류 검사
+    val doctor = remember { ArchiveDoctor.get(context) }
+    val doctorReports by doctor.reports.collectAsState()
+    val doctorState by doctor.state.collectAsState()
+    var doctorKey by remember { mutableStateOf<String?>(null) } // 길게 눌러 검사한 폴더(하위 폴더일 수 있음)
+    val hereKey = doctor.keyOf(origin, path)
+    fun checkArchives(folderPath: String, label: String, targets: List<FileEntry>?) {
+        doctorKey = doctor.keyOf(origin, folderPath)
+        if (targets != null) {
+            doctor.checkNow(origin, folderPath, label, targets)
+        } else {
+            scope.launch {
+                try {
+                    val list = thumbs?.list(origin, folderPath).orEmpty()
+                    doctor.checkNow(origin, folderPath, label, list)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    toast("폴더를 읽지 못했어요: ${e.message ?: e.javaClass.simpleName}")
+                }
+            }
+        }
     }
 
     fun startDupScan() {
@@ -442,6 +468,41 @@ fun FolderBrowser(
         else -> Unit
     }
 
+    // ── 압축 오류 검사 창들 (이 폴더 것, 또는 길게 눌러 검사한 폴더 것)
+    run {
+        val mine = { k: String -> k == hereKey || k == doctorKey }
+        when (val ds = doctorState) {
+            is ArchiveDoctor.State.Working -> if (mine(ds.key)) ArchiveWorkingDialog(ds)
+            is ArchiveDoctor.State.Done -> if (mine(ds.key)) {
+                AlertDialog(
+                    onDismissRequest = { doctor.clearDone() },
+                    title = { Text("완료") },
+                    text = { Text(ds.message) },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            doctor.clearDone()
+                            reloadKey++ // 바뀐 파일 목록 다시 읽기 (새 파일 표지도 자동으로 만들어짐)
+                        }) { Text("확인") }
+                    },
+                )
+            }
+            ArchiveDoctor.State.Idle -> {
+                val report = doctorReports.values.firstOrNull { mine(it.key) }
+                if (report != null && comparing == null && !dupMenu) {
+                    ArchiveReportDialog(
+                        report = report,
+                        onUnnest = { doctor.fixNested(report) },
+                        onMoveBroken = { doctor.moveBroken(report) },
+                        onClose = {
+                            doctor.dismiss(report.key)
+                            if (report.key == doctorKey) doctorKey = null
+                        },
+                    )
+                }
+            }
+        }
+    }
+
     // ── 길게 누르기 메뉴
     menuFor?.let { target ->
         val started = remember(target, progressStore.version) {
@@ -477,6 +538,10 @@ fun FolderBrowser(
                             thumbs?.invalidate(origin, listOf(target))
                             toast("표지를 다시 만들어요")
                         }
+                        MenuItem("압축 오류 검사하기", icon = AppIcons.Warning) {
+                            menuFor = null
+                            checkArchives(path, folderName(path), listOf(target))
+                        }
                         MenuItem("읽은 진행률 초기화", icon = AppIcons.Reset, enabled = started) {
                             menuFor = null
                             confirm = Confirm(target, ConfirmAction.RESET, 1)
@@ -493,6 +558,10 @@ fun FolderBrowser(
                                 if (added) "'${target.name}' 썸네일 갱신을 줄에 올렸어요 — 위쪽에 진행 표시가 떠요"
                                 else "'${target.name}'은 이미 갱신 중이거나 대기 중이에요"
                             )
+                        }
+                        MenuItem("압축 오류 검사하기", icon = AppIcons.Warning) {
+                            menuFor = null
+                            checkArchives(target.path, target.name, null)
                         }
                         val fav = isFavorite(target.path)
                         MenuItem(if (fav) "즐겨찾기에서 빼기" else "즐겨찾기에 추가", icon = if (fav) AppIcons.FavoriteOn else AppIcons.Favorite) {

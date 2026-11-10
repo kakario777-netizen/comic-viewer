@@ -104,9 +104,40 @@ class ThumbnailLoader private constructor(context: Context) {
             // 접속 오류 등 — 이번엔 실패로 두고, 다음에 화면을 다시 열면 재시도
             return null
         }
-        if (bmp == null) misses += key else memory.put(key, bmp)
+        if (bmp == null) {
+            misses += key
+            // 파일은 읽었는데 표지가 없음(2중 압축·손상 등) → 기억해서 폴더 들어갈 때마다 다시 안 받음
+            if (!entry.isDirectory) markFailed(key)
+        } else {
+            memory.put(key, bmp)
+        }
         return bmp
     }
+
+    // ───── 표지를 못 만든 파일 기억 (앱을 껐다 켜도 유지)
+    private val failedFile = File(dir, "failed.txt")
+    private val failed: MutableSet<String> by lazy {
+        ConcurrentHashMap.newKeySet<String>().apply {
+            runCatching { failedFile.takeIf { it.exists() }?.readLines()?.filter { it.isNotBlank() }?.let { addAll(it) } }
+        }
+    }
+
+    private fun markFailed(key: String) {
+        if (failed.add(key)) runCatching { failedFile.appendText(key + "\n") }
+    }
+
+    private fun saveFailed() {
+        runCatching { failedFile.writeText(failed.joinToString("\n", postfix = "\n")) }
+    }
+
+    /** 이 파일 표지가 이미 있는지 (메모리·디스크). */
+    fun hasThumb(origin: ThumbOrigin, entry: FileEntry): Boolean {
+        val key = keyFor(origin, entry)
+        return memory.get(key) != null || fileFor(key).exists()
+    }
+
+    /** 전에 표지를 못 만든 파일인지. */
+    fun isFailed(origin: ThumbOrigin, entry: FileEntry): Boolean = keyFor(origin, entry) in failed
 
     // ───────────────────────── 폴더 썸네일 갱신 작업 줄 ─────────────────────────
     //  · 한 번에 한 폴더만 처리한다.
@@ -120,6 +151,8 @@ class ThumbnailLoader private constructor(context: Context) {
         val path: String,
         val label: String,
         val auto: Boolean,
+        /** 화면이 이미 읽어둔 폴더 목록 (있으면 다시 안 읽음) */
+        val entries: List<FileEntry>? = null,
     ) {
         @Volatile var done: Int = 0
         /** 폴더 안 ZIP 수. 아직 모르면 null. */
@@ -131,7 +164,22 @@ class ThumbnailLoader private constructor(context: Context) {
     data class JobInfo(val id: Long, val label: String, val done: Int, val total: Int?, val auto: Boolean)
 
     /** 화면 상단·상세 창에 보여줄 상태. null이면 아무 작업도 없음. */
-    data class Status(val current: JobInfo, val waiting: List<JobInfo>)
+    data class Status(val current: JobInfo, val waiting: List<JobInfo>, val phase: String = "썸네일 갱신 중")
+
+    /** 지금 단계 (썸네일 갱신 → 중복 확인 → 압축 오류 확인) */
+    @Volatile private var phase = "썸네일 갱신 중"
+
+    fun setPhase(p: String) {
+        phase = p
+        synchronized(jobLock) { publishLocked() }
+    }
+
+    /**
+     * 한 폴더 썸네일 갱신이 끝난 뒤 이어서 할 일 (중복 확인 → 압축 오류 확인).
+     * 같은 작업 줄 안에서 차례로 돌기 때문에 다른 갱신과 부딪히지 않는다.
+     * failed = 표지를 못 만든 파일들.
+     */
+    var onFolderDone: (suspend (origin: ThumbOrigin, path: String, label: String, zips: List<FileEntry>, failed: List<FileEntry>) -> Unit)? = null
 
     private val _status = MutableStateFlow<Status?>(null)
     val status: StateFlow<Status?> = _status
@@ -152,12 +200,13 @@ class ThumbnailLoader private constructor(context: Context) {
      * 지금 보고 있는 폴더 — 이전 폴더의 자동 갱신은 멈추고 이 폴더로 바꾼다.
      * zipCount를 알면 넘겨서 '0/100'처럼 바로 보여준다.
      */
-    fun watchFolder(origin: ThumbOrigin, path: String, label: String, zipCount: Int? = null) {
+    fun watchFolder(origin: ThumbOrigin, path: String, label: String, entries: List<FileEntry>? = null) {
         synchronized(jobLock) {
             val r = running
             if (r != null && r.auto && r.same(origin, path)) return
             if (r != null && r.auto) runningTask?.cancel()
-            autoJob = Job(nextId++, origin, path, label, auto = true).also { it.total = zipCount }
+            autoJob = Job(nextId++, origin, path, label, auto = true, entries = entries)
+                .also { it.total = entries?.count { e -> e.isComicArchive } }
             publishLocked()
         }
         wake.trySend(Unit)
@@ -229,7 +278,7 @@ class ThumbnailLoader private constructor(context: Context) {
             autoJob?.let { add(it.info()) }
             queue.forEach { add(it.info()) }
         }
-        _status.value = Status(r.info(), waiting)
+        _status.value = Status(r.info(), waiting, phase)
     }
 
     private suspend fun worker() {
@@ -238,13 +287,15 @@ class ThumbnailLoader private constructor(context: Context) {
                 // 지금 보는 폴더가 먼저, 그다음 요청한 폴더 순서대로
                 val next = autoJob?.also { autoJob = null } ?: queue.removeFirstOrNull()
                 running = next
-                publishLocked()
+                // 지금 보는 폴더 자동 갱신은 할 게 있을 때만 표시 (process가 확인 후 띄움)
+                if (next == null || !next.auto) publishLocked()
                 next
             }
             if (job == null) {
                 wake.receive()
                 continue
             }
+            phase = "썸네일 갱신 중"
             val task = scope.launch { process(job) }
             synchronized(jobLock) { runningTask = task }
             task.join()
@@ -257,26 +308,35 @@ class ThumbnailLoader private constructor(context: Context) {
     }
 
     private suspend fun process(job: Job) {
-        try {
-            val zips = list(job.origin, job.path).filter { it.isComicArchive }
-            job.total = zips.size
-            job.done = 0
-            synchronized(jobLock) { publishLocked() }
-            for (e in zips) {
-                paused.first { !it } // 만화 보는 중엔 잠깐 쉼
-                val key = keyFor(job.origin, e)
-                if (memory.get(key) == null && !fileFor(key).exists()) { // 없는 표지만
-                    misses.remove(key) // 전에 실패했던 것도 다시 시도
-                    load(job.origin, e)
-                }
-                job.done++
-                synchronized(jobLock) { publishLocked() }
-            }
+        val zips = try {
+            (job.entries ?: list(job.origin, job.path)).filter { it.isComicArchive }
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (_: Exception) {
-            // 폴더를 못 읽으면 이 작업은 건너뛴다
+            return // 폴더를 못 읽으면 이 작업은 건너뛴다
         }
+        // 이미 표지가 있거나, 전에 확실히 못 만든 파일은 건너뜀 → 할 게 없으면 표시 없이 바로 끝
+        val needed = withContext(Dispatchers.IO) {
+            zips.filter { !hasThumb(job.origin, it) && !isFailed(job.origin, it) }
+        }
+        if (needed.isEmpty() && job.auto) {
+            synchronized(jobLock) { running = null; publishLocked() }
+            return
+        }
+        job.total = needed.size
+        job.done = 0
+        synchronized(jobLock) { publishLocked() }
+        for (e in needed) {
+            paused.first { !it } // 만화 보는 중엔 잠깐 쉼
+            misses.remove(keyFor(job.origin, e))
+            load(job.origin, e)
+            job.done++
+            synchronized(jobLock) { publishLocked() }
+        }
+        // 썸네일이 끝나면 이어서 중복 확인 → 압축 오류 확인 (차례로)
+        val failedNow = zips.filter { isFailed(job.origin, it) }
+        runCatching { onFolderDone?.invoke(job.origin, job.path, job.label, zips, failedNow) }
+            .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
     }
 
     /** 주어진 항목들의 표지를 지우고 다시 만들게 한다. */
@@ -285,8 +345,10 @@ class ThumbnailLoader private constructor(context: Context) {
             val key = keyFor(origin, e)
             memory.remove(key)
             misses.remove(key)
+            failed.remove(key)
             fileFor(key).delete()
         }
+        saveFailed()
         generation++
     }
 
@@ -393,6 +455,7 @@ class ThumbnailLoader private constructor(context: Context) {
     fun clear() {
         memory.evictAll()
         misses.clear()
+        failed.clear()
         dir.listFiles()?.forEach { it.delete() }
         generation++
     }
