@@ -1,5 +1,7 @@
 package com.kakario.comicviewer.ui
 
+import com.kakario.comicviewer.update.Updater
+import androidx.compose.runtime.collectAsState
 import android.content.Intent
 import android.net.Uri
 import android.os.PowerManager
@@ -253,12 +255,28 @@ fun SettingsScreen(
             Divider()
 
             SectionTitle("앱 정보")
-            Text(
-                "코믹뷰어 버전 $version",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
-            )
+            val updater = remember { Updater.get(context) }
+            val upState by updater.state.collectAsState()
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "코믹뷰어 빌드 #${updater.currentBuild}",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onBackground,
+                    )
+                    Text(
+                        if (upState is Updater.State.Checking) "확인하는 중…" else "앱을 켤 때마다 새 버전을 자동으로 확인해요",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                OutlinedButton(onClick = { updater.check(quiet = false) }) { Text("업데이트 확인") }
+            }
             Spacer(Modifier.height(24.dp))
         }
     }

@@ -4,6 +4,8 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import com.kakario.comicviewer.update.Updater
+import com.kakario.comicviewer.ui.UpdateDialog
 import com.kakario.comicviewer.dup.DupScanner
 import com.kakario.comicviewer.fix.ArchiveDoctor
 import com.kakario.comicviewer.thumb.ThumbWorkService
@@ -140,6 +142,9 @@ class MainActivity : ComponentActivity() {
         val favoriteStore = FavoriteStore(applicationContext)
         val settingsStore = SettingsStore(applicationContext)
         thumbnails = ThumbnailLoader.get(applicationContext)
+        // 앱 켤 때 새 버전 조용히 확인 (있을 때만 창이 뜸)
+        val updater = Updater.get(applicationContext)
+        if (savedInstanceState == null) updater.check(quiet = true)
         // 썸네일 갱신이 끝난 폴더는 이어서 차례로: 중복 확인(중복 검사 폴더만) → 표지 안 나온 파일 압축 오류 확인
         thumbnails.onFolderDone = { origin, path, label, zips, failed ->
             val dup = DupScanner.get(applicationContext)
@@ -409,6 +414,9 @@ class MainActivity : ComponentActivity() {
                 }
                 // 중복 비교 화면 등 — 탭·제목줄까지 덮는 자리
                 overlayHost.content?.invoke()
+                // 업데이트 알림·받는 중·설치 안내
+                val updateState by updater.state.collectAsState()
+                UpdateDialog(updateState, updater)
                 // 만화 뷰어는 책장 위에 덮어서 띄운다 (닫으면 보던 책장 그대로)
                 openBook?.let { book ->
                     ViewerScreen(
