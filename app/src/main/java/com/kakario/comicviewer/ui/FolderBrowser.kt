@@ -219,6 +219,21 @@ fun FolderBrowser(
     val doctorState by doctor.state.collectAsState()
     var doctorKey by remember { mutableStateOf<String?>(null) } // 길게 눌러 검사한 폴더(하위 폴더일 수 있음)
     val hereKey = doctor.keyOf(origin, path)
+    fun startDupScan() {
+        val list = loaded ?: return
+        progressHidden = false
+        dup.scan(origin, path, folderName(path), list)
+    }
+
+    BackHandler(onBack = onUp)
+
+    fun toast(msg: String) {
+        scope.launch {
+            snackbar.currentSnackbarData?.dismiss()
+            snackbar.showSnackbar(msg)
+        }
+    }
+
     fun checkArchives(folderPath: String, label: String, targets: List<FileEntry>?) {
         doctorKey = doctor.keyOf(origin, folderPath)
         if (targets != null) {
@@ -237,20 +252,6 @@ fun FolderBrowser(
         }
     }
 
-    fun startDupScan() {
-        val list = loaded ?: return
-        progressHidden = false
-        dup.scan(origin, path, folderName(path), list)
-    }
-
-    BackHandler(onBack = onUp)
-
-    fun toast(msg: String) {
-        scope.launch {
-            snackbar.currentSnackbarData?.dismiss()
-            snackbar.showSnackbar(msg)
-        }
-    }
 
     fun toggle(p: String) {
         val wasOn = isFavorite(p)
