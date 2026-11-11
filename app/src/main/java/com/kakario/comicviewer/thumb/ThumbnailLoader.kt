@@ -115,7 +115,7 @@ class ThumbnailLoader private constructor(context: Context) {
     }
 
     // ───── 표지를 못 만든 파일 기억 (앱을 껐다 켜도 유지)
-    private val failedFile = File(dir, "failed.txt")
+    private val failedFile = File(dir, "failed-v2.txt").also { File(dir, "failed.txt").delete() } // v2: AVIF 지원 후 예전 실패 목록 다시 시도
     private val failed: MutableSet<String> by lazy {
         ConcurrentHashMap.newKeySet<String>().apply {
             runCatching { failedFile.takeIf { it.exists() }?.readLines()?.filter { it.isNotBlank() }?.let { addAll(it) } }
