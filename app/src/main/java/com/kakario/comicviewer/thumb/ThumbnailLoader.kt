@@ -406,19 +406,8 @@ class ThumbnailLoader private constructor(context: Context) {
 
     /** 원본 이미지를 책장 크기(가로 약 360px)로 줄인다. 메모리를 아끼려 RGB565로. */
     private fun makeThumb(raw: ByteArray): Bitmap? {
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeByteArray(raw, 0, raw.size, bounds)
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-
-        var sample = 1
-        while (bounds.outWidth / (sample * 2) >= TARGET_WIDTH) sample *= 2
-        val decoded = BitmapFactory.decodeByteArray(
-            raw, 0, raw.size,
-            BitmapFactory.Options().apply {
-                inSampleSize = sample
-                inPreferredConfig = Bitmap.Config.RGB_565
-            },
-        ) ?: return null
+        val decoded = com.kakario.comicviewer.viewer.ImageCodec.decode(raw, TARGET_WIDTH * 2, Bitmap.Config.RGB_565)
+            ?: return null
 
         if (decoded.width <= TARGET_WIDTH) return decoded
         val h = (decoded.height.toLong() * TARGET_WIDTH / decoded.width).toInt().coerceAtLeast(1)

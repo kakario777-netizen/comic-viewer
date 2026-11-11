@@ -736,10 +736,39 @@ private fun PageImage(book: ComicBook, index: Int, alignment: Alignment, modifie
         }
     }
 
+    // 움직이는 GIF·WebP는 첫 장을 먼저 보여주고, 준비되면 움직이는 그림으로 바꾼다
+    val anim by produceState<android.graphics.drawable.Drawable?>(null, index, bitmap != null) {
+        if (bitmap == null) return@produceState
+        value = try { book.animated(index) } catch (e: CancellationException) { throw e } catch (e: Exception) { null }
+    }
+
     Box(modifier.fillMaxHeight(), contentAlignment = Alignment.Center) {
         val b = bitmap
         val err = error
+        val a = anim
         when {
+            a != null -> androidx.compose.ui.viewinterop.AndroidView(
+                factory = { ctx ->
+                    android.widget.ImageView(ctx).apply {
+                        isClickable = false
+                        isFocusable = false
+                    }
+                },
+                update = { v ->
+                    v.scaleType = when (alignment) {
+                        Alignment.CenterEnd -> android.widget.ImageView.ScaleType.FIT_END
+                        Alignment.CenterStart -> android.widget.ImageView.ScaleType.FIT_START
+                        else -> android.widget.ImageView.ScaleType.FIT_CENTER
+                    }
+                    if (v.drawable !== a) {
+                        v.setImageDrawable(a)
+                        (a as? android.graphics.drawable.Animatable)?.start()
+                    }
+                },
+                onRelease = { v -> ((v.drawable) as? android.graphics.drawable.Animatable)?.stop() },
+                modifier = Modifier.fillMaxSize(),
+            )
+
             b != null -> Image(
                 bitmap = b.asImageBitmap(),
                 contentDescription = null,

@@ -167,17 +167,14 @@ class ComicBook(
         }
     }
 
-    private fun decode(bytes: ByteArray): Bitmap? {
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-        var sample = 1
-        val longest = maxOf(bounds.outWidth, bounds.outHeight)
-        while (longest / (sample * 2) >= maxSide) sample *= 2
-        return BitmapFactory.decodeByteArray(
-            bytes, 0, bytes.size,
-            BitmapFactory.Options().apply { inSampleSize = sample },
-        )
+    private fun decode(bytes: ByteArray): Bitmap? = ImageCodec.decode(bytes, maxSide)
+
+    /** 움직이는 GIF·WebP면 재생용 그림 (아니면 null). */
+    suspend fun animated(index: Int): android.graphics.drawable.Drawable? {
+        val name = pages.getOrNull(index)?.name?.substringAfterLast('.', "")?.lowercase() ?: return null
+        if (name !in ANIM_EXT) return null
+        val bytes = raw(index, prefetch = false)
+        return withContext(Dispatchers.Default) { ImageCodec.animated(bytes, maxSide) }
     }
 
     fun close() {
@@ -192,5 +189,9 @@ class ComicBook(
         }.start()
         bitmaps.evictAll()
         raws.evictAll()
+    }
+
+    private companion object {
+        val ANIM_EXT = setOf("gif", "webp", "avif")
     }
 }
