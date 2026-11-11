@@ -22,6 +22,20 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
+import java.io.BufferedOutputStream
+import java.io.FilterOutputStream
+import java.io.OutputStream
+import java.io.PipedInputStream
+import java.io.PipedOutputStream
+import java.util.zip.Deflater
+import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.ensureActive
+import kotlin.coroutines.coroutineContext
 import java.io.FilterInputStream
 import java.io.InputStream
 import java.io.RandomAccessFile
@@ -158,16 +172,36 @@ class ArchiveDoctor private constructor(context: Context) {
 
     // ───────────────────────── 고치기
 
+    /** 2중 압축 처리 방식. MERGE = 한 압축파일 안에 폴더(1, 2, 3…)로 합치기 / SPLIT = 안쪽 압축을 각각 파일로 꺼내기 */
+    enum class Mode { MERGE, SPLIT }
+
+    /** 파일마다 고른 방식과 이름 (확장자 빼고). */
+    data class NestPlan(
+        val mode: Mode,
+        val fileName: String,
+        val folderNames: List<String>,
+        val fileNames: List<String>,
+    )
+
+    /** 바깥 파일 경로 → 고른 방식 (창을 닫았다 열어도 유지) */
+    val plans = androidx.compose.runtime.mutableStateMapOf<String, NestPlan>()
+
+    fun planOf(d: Diagnosis): NestPlan = plans[d.entry.path] ?: defaultPlan(d)
+
     /**
-     * 2중 압축 파일들을 풀어서 일반 만화 파일로 바꾼다.
-     * names: 바깥 파일 경로 → 꺼낼 파일 이름들(확장자 빼고, 안쪽 ZIP 순서대로). 없으면 기본 이름.
-     * only: 지정하면 그 파일들만 푼다.
+     * 2중 압축 파일들을 고친다. only: 지정하면 그 파일들만.
      */
-    fun fixNested(report: Report, names: Map<String, List<String>> = emptyMap(), only: Set<String>? = null) =
+    fun fixNested(report: Report, only: Set<String>? = null) =
         runFix(report, "2중 압축 푸는 중", report.nested.filter { only == null || it.entry.path in only }) { d, i, n ->
-        unnest(report.origin, report.path, d, names[d.entry.path]) { detail ->
+        val plan = planOf(d)
+        val progress = { detail: String ->
             _state.value = State.Working(report.key, "2중 압축 푸는 중", i, n, "${d.entry.name}\n$detail")
         }
+        if (plan.mode == Mode.MERGE) merge(report.origin, report.path, d, plan, progress)
+        else unnest(report.origin, report.path, d, plan.fileNames) { detail ->
+            _state.value = State.Working(report.key, "2중 압축 푸는 중", i, n, "${d.entry.name}\n$detail")
+        }
+        plans.remove(d.entry.path)
     }
 
     /** 오류 파일들을 '오류난 파일' 폴더로 옮긴다. */
@@ -269,6 +303,119 @@ class ArchiveDoctor private constructor(context: Context) {
         } catch (e: Exception) {
             // 실패하면 만든 임시 파일 정리 (원본은 그대로)
             for ((tmp, _) in made) runCatching { delete(origin, tmp) }
+            throw e
+        }
+    }
+
+    /**
+     * 한 압축파일로 합치기: 안쪽 ZIP 1, 2, 3… 의 이미지들을 폴더(1/, 2/, 3/…)로 나눠 새 ZIP 하나에 담는다.
+     * 원본은 숨김 폴더로. (전체를 폰에 받아두지 않고 흘려서 바로 씀)
+     */
+    private suspend fun merge(origin: ThumbOrigin, folder: String, d: Diagnosis, plan: NestPlan, progress: (String) -> Unit) {
+        for (inner in d.inner) if (inner.method != 0 && inner.method != 8) throw UserFacingException("지원 안 하는 압축 방식이에요")
+        val taken = list(origin, folder).map { it.name }.toMutableSet().apply { remove(d.entry.name) }
+        val ext = d.entry.name.substringAfterLast('.', "zip").lowercase().let { if (it in INNER_ZIP) it else "zip" }
+        val dest = uniqueName(cleanName(plan.fileName).ifEmpty { baseName(d.entry.name) } + ".$ext", taken)
+        val tmp = joinPath(folder, ".cvtmp_$dest")
+        // 폴더 이름 (겹치면 (2))
+        val dirs = mutableSetOf<String>()
+        val dirNames = d.inner.mapIndexed { i, inner ->
+            val def = baseName(inner.name.substringAfterLast('/'))
+            val n = uniqueName(cleanName(plan.folderNames.getOrNull(i)).ifEmpty { def }.ifEmpty { "${i + 1}" }, dirs)
+            dirs += n
+            n
+        }
+        val starts = withSource(origin, d.entry.path, d.entry.size) { src ->
+            d.inner.map { inner ->
+                val h = src.read(inner.localOffset, 30)
+                if (h.size < 30 || u32(h, 0) != 0x04034b50L) throw UserFacingException("압축파일 구조가 이상해요")
+                inner.localOffset + 30 + u16(h, 26) + u16(h, 28)
+            }
+        }
+        var written = 0L
+        var images = 0
+        // 안쪽 ZIP 하나를 열어서 block에 스트림으로 넘김
+        suspend fun openInner(i: Int, block: (InputStream) -> Unit) {
+            val inner = d.inner[i]
+            fun wrap(raw: InputStream): InputStream {
+                val limited = Limited(raw, inner.compressedSize, padOne = inner.method == 8)
+                return if (inner.method == 8) InflaterInputStream(limited, Inflater(true), 64 * 1024) else limited
+            }
+            val s = origin.server
+            if (s != null) {
+                readConn(s).download(d.entry.path, starts[i]) { raw -> block(wrap(raw)) }
+            } else withContext(Dispatchers.IO) {
+                RandomAccessFile(d.entry.path, "r").use { raf ->
+                    raf.seek(starts[i])
+                    block(wrap(Channels.newInputStream(raf.channel)))
+                }
+            }
+        }
+        suspend fun writeAll(out: OutputStream) {
+            val counted = object : FilterOutputStream(out) {
+                override fun write(b: ByteArray, off: Int, len: Int) { out.write(b, off, len); written += len }
+                override fun write(b: Int) { out.write(b); written++ }
+            }
+            val zos = ZipOutputStream(BufferedOutputStream(counted, 256 * 1024))
+            zos.setLevel(Deflater.NO_COMPRESSION) // 이미지는 이미 압축돼 있어서 다시 압축 안 함 (빠름)
+            for (i in d.inner.indices) {
+                coroutineContext.ensureActive()
+                openInner(i) { input ->
+                    val zin = ZipInputStream(input, koreanCharset)
+                    val buf = ByteArray(64 * 1024)
+                    var lastMb = -1L
+                    while (true) {
+                        val e = zin.nextEntry ?: break
+                        if (e.isDirectory || e.name.contains("__MACOSX")) continue
+                        val name = e.name.replace('\\', '/').trimStart('/')
+                        zos.putNextEntry(ZipEntry("${dirNames[i]}/$name").apply { if (e.time > 0) time = e.time })
+                        while (true) {
+                            val n = zin.read(buf)
+                            if (n < 0) break
+                            zos.write(buf, 0, n)
+                        }
+                        zos.closeEntry()
+                        images++
+                        val mb = written / (1024 * 1024)
+                        if (mb != lastMb) {
+                            lastMb = mb
+                            progress("${i + 1}/${d.inner.size} '${dirNames[i]}' 합치는 중 · $mb MB")
+                        }
+                    }
+                }
+            }
+            zos.finish()
+            zos.flush()
+        }
+        try {
+            val s = origin.server
+            if (s != null) {
+                val pin = PipedInputStream(1024 * 1024)
+                val pout = PipedOutputStream(pin)
+                coroutineScope {
+                    val producer = async(Dispatchers.IO) {
+                        try { writeAll(pout) } finally { runCatching { pout.close() } }
+                    }
+                    val ok = try { writeConn(s).upload(tmp, pin) } finally { runCatching { pin.close() } }
+                    producer.await()
+                    if (!ok) throw UserFacingException("서버에 파일을 쓰지 못했어요 (쓰기 권한 확인)")
+                }
+            } else withContext(Dispatchers.IO) {
+                FileOutputStream(tmp).use { writeAll(it) }
+            }
+            if (images == 0) throw UserFacingException("안쪽 압축에서 이미지를 찾지 못했어요")
+            progress("확인하는 중")
+            val good = withSource(origin, tmp, written) { src ->
+                ZipCover.listEntries(src)?.let { ZipCover.imagePages(it).isNotEmpty() } ?: false
+            }
+            if (!good) throw UserFacingException("합친 파일 확인에 실패했어요")
+            val hidden = joinPath(folder, ORIGINAL_DIR)
+            makeDir(origin, hidden)
+            val hiddenTaken = runCatching { list(origin, hidden).map { it.name }.toSet() }.getOrDefault(emptySet())
+            rename(origin, d.entry.path, joinPath(hidden, uniqueName(d.entry.name, hiddenTaken)))
+            rename(origin, tmp, joinPath(folder, dest))
+        } catch (e: Exception) {
+            withContext(NonCancellable) { runCatching { delete(origin, tmp) } }
             throw e
         }
     }
@@ -393,6 +540,18 @@ class ArchiveDoctor private constructor(context: Context) {
         const val ERROR_DIR = "오류난 파일"
         private val INNER_ZIP = setOf("zip", "cbz")
         private val OTHER_ARCHIVE = setOf("rar", "cbr", "7z", "cb7", "alz", "egg", "tar", "gz")
+
+        private val koreanCharset: java.nio.charset.Charset = runCatching { java.nio.charset.Charset.forName("MS949") }
+            .recoverCatching { java.nio.charset.Charset.forName("EUC-KR") }
+            .getOrDefault(Charsets.UTF_8)
+
+        /** 기본: 안쪽이 여러 개면 한 파일로 합치기(폴더별), 1개면 꺼내기. */
+        fun defaultPlan(d: Diagnosis) = NestPlan(
+            mode = if (d.inner.size > 1) Mode.MERGE else Mode.SPLIT,
+            fileName = baseName(d.entry.name),
+            folderNames = d.inner.map { baseName(it.name.substringAfterLast('/')) },
+            fileNames = defaultNames(d),
+        )
 
         /** 꺼낼 파일 기본 이름(확장자 빼고): 안쪽이 1개면 바깥 파일 이름, 여러 개면 안쪽 파일 이름. */
         fun defaultNames(d: Diagnosis): List<String> =

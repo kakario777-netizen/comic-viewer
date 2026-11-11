@@ -69,6 +69,10 @@ import com.kakario.comicviewer.data.ProgressStore
 import com.kakario.comicviewer.data.SettingsStore
 import com.kakario.comicviewer.data.SortKey
 import com.kakario.comicviewer.model.NaturalOrder
+import com.kakario.comicviewer.model.Series
+import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.unit.Dp
 import com.kakario.comicviewer.model.sortedForShelf
 import com.kakario.comicviewer.model.FileEntry
 import com.kakario.comicviewer.model.UserFacingException
@@ -354,21 +358,35 @@ fun FolderBrowser(
                                 textAlign = TextAlign.Center,
                             )
                         } else {
+                            val columns = LocalGridColumns.current
+                            val series = remember(visible) { Series.group(visible) }
                             LazyVerticalGrid(
-                                columns = GridCells.Fixed(LocalGridColumns.current),
+                                columns = GridCells.Fixed(columns),
                                 contentPadding = PaddingValues(12.dp),
                                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                                 verticalArrangement = Arrangement.spacedBy(14.dp),
                                 modifier = Modifier.fillMaxSize(),
                             ) {
-                                items(visible, key = { it.path }) { entry ->
+                                itemsIndexed(visible, key = { _, it -> it.path }) { index, entry ->
                                     val sel2 = selected
+                                    val mark = series[entry.path]
                                     ShelfTile(
                                         origin = origin,
                                         entry = entry,
                                         favorite = entry.isDirectory && isFavorite(entry.path),
                                         onToggleFavorite = { toggle(entry.path) },
                                         selected = sel2?.contains(entry.path),
+                                        series = mark?.let {
+                                            val col = index % columns
+                                            SeriesStrip(
+                                                label = it.label,
+                                                showLabel = it.start || col == 0,
+                                                roundStart = it.start,
+                                                roundEnd = it.end,
+                                                extendStart = !it.start && col != 0,
+                                                extendEnd = !it.end && col != columns - 1,
+                                            )
+                                        },
                                         onClick = {
                                             when {
                                                 sel2 != null -> selected =
@@ -583,7 +601,8 @@ fun FolderBrowser(
                 if (report != null && comparing == null && !dupMenu) {
                     ArchiveReportDialog(
                         report = report,
-                        onUnnest = { names, only -> doctor.fixNested(report, names, only) },
+                        doctor = doctor,
+                        onUnnest = { only -> doctor.fixNested(report, only) },
                         onMoveBroken = { doctor.moveBroken(report) },
                         onClose = {
                             doctor.dismiss(report.key)
@@ -794,13 +813,13 @@ private fun ShelfTile(
     onToggleFavorite: () -> Unit,
     /** null = 선택 모드 아님 */
     selected: Boolean? = null,
+    series: SeriesStrip? = null,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
 ) {
     Column(
-        Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+        // 시리즈 띠가 옆 칸까지 이어져야 해서 여기서는 자르지 않음
+        Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)
     ) {
         Box {
             val tileModifier = Modifier
@@ -818,8 +837,12 @@ private fun ShelfTile(
             } else {
                 CoverImage(origin = origin, entry = entry, modifier = tileModifier)
             }
+            if (series != null) SeriesBand(series, Modifier.align(Alignment.BottomStart))
             if (entry.isComicArchive) {
-                ReadBadge(origin, entry, Modifier.align(Alignment.BottomCenter))
+                ReadBadge(
+                    origin, entry,
+                    Modifier.align(Alignment.BottomCenter).padding(bottom = if (series != null) SERIES_H else 0.dp),
+                )
                 NewDot(origin, entry, Modifier.align(Alignment.TopEnd))
             }
             if (selected != null) {
@@ -1216,4 +1239,58 @@ private fun RenameDialog(entry: FileEntry, onDismiss: () -> Unit, onConfirm: (St
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
     )
+}
+
+
+/** 시리즈 띠 한 칸의 모양 (옆 칸과 이어지는지, 글자를 보일지). */
+data class SeriesStrip(
+    val label: String,
+    val showLabel: Boolean,
+    val roundStart: Boolean,
+    val roundEnd: Boolean,
+    val extendStart: Boolean,
+    val extendEnd: Boolean,
+)
+
+private val SERIES_H: Dp = 20.dp
+private val SERIES_BLUE = Color(0xB31E88E5)
+
+/** 표지 아래쪽 반투명 파란 띠 — 같은 시리즈끼리 칸 사이까지 이어져 보인다. */
+@Composable
+private fun SeriesBand(s: SeriesStrip, modifier: Modifier) {
+    val gap = 5.dp // 칸 사이 간격(10dp)의 절반만큼 양옆으로 늘림
+    val r = 6.dp
+    Box(
+        modifier
+            .layout { m, c ->
+                val l = if (s.extendStart) gap.roundToPx() else 0
+                val rr = if (s.extendEnd) gap.roundToPx() else 0
+                val w = c.maxWidth + l + rr
+                val p = m.measure(c.copy(minWidth = w, maxWidth = w))
+                layout(c.maxWidth, p.height) { p.place(-l, 0) }
+            }
+            .fillMaxWidth()
+            .height(SERIES_H)
+            .background(
+                SERIES_BLUE,
+                RoundedCornerShape(
+                    topStart = if (s.roundStart) r else 0.dp,
+                    bottomStart = if (s.roundStart) r else 0.dp,
+                    topEnd = if (s.roundEnd) r else 0.dp,
+                    bottomEnd = if (s.roundEnd) r else 0.dp,
+                ),
+            ),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        if (s.showLabel) {
+            Text(
+                s.label,
+                color = Color.White,
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 6.dp),
+            )
+        }
+    }
 }

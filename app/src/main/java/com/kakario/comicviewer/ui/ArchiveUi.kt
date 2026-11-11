@@ -15,7 +15,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.material3.Button
+import androidx.compose.material3.RadioButton
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -38,35 +39,34 @@ import com.kakario.comicviewer.fix.ArchiveDoctor
 
 /**
  * 압축 오류 검사 결과: 2중 압축 풀기 / 오류 파일 옮기기를 여기서 묻는다.
- * 2중 압축 파일을 누르면 안쪽 압축 목록을 보고 꺼낼 이름을 고칠 수 있다 (다음 → 다음 → 목록에서 전체 풀기).
+ * 2중 압축 파일을 누르면 하나씩 확인하고 방식(한 파일로 합치기 / 각각 꺼내기)·이름을 고를 수 있다.
  */
 @Composable
 fun ArchiveReportDialog(
     report: ArchiveDoctor.Report,
-    onUnnest: (names: Map<String, List<String>>, only: Set<String>?) -> Unit,
+    doctor: ArchiveDoctor,
+    onUnnest: (only: Set<String>?) -> Unit,
     onMoveBroken: () -> Unit,
     onClose: () -> Unit,
 ) {
     val nested = report.nested
     val broken = report.broken
     val unknown = report.unknown
-    // 바깥 파일 경로 → 꺼낼 이름들 (확장자 빼고)
-    val names = remember(report.key) { mutableStateMapOf<String, List<String>>() }
     var editing by remember(report.key) { mutableStateOf<Int?>(null) }
-    fun namesOf(d: ArchiveDoctor.Diagnosis) = names[d.entry.path] ?: ArchiveDoctor.defaultNames(d)
 
     val idx = editing?.takeIf { it in nested.indices }
     if (idx != null) {
+        val d = nested[idx]
         NestedEditDialog(
-            d = nested[idx],
+            d = d,
             index = idx,
             count = nested.size,
-            names = namesOf(nested[idx]),
-            onNames = { names[nested[idx].entry.path] = it },
+            plan = doctor.planOf(d),
+            onPlan = { doctor.plans[d.entry.path] = it },
             onPrev = { editing = idx - 1 },
             onNext = { editing = if (idx + 1 < nested.size) idx + 1 else null },
             onBack = { editing = null },
-            onUnnestOne = { onUnnest(names.toMap(), setOf(nested[idx].entry.path)) },
+            onRunThis = { onUnnest(setOf(d.entry.path)) },
         )
         return
     }
@@ -90,7 +90,7 @@ fun ArchiveReportDialog(
                     Spacer(Modifier.height(8.dp))
                     if (nested.isNotEmpty()) {
                         Text(
-                            "2중 압축 파일을 누르면 안에 든 압축을 보고 이름을 고칠 수 있어요.",
+                            "2중 압축 파일을 누르면 하나씩 확인하고 방식·이름을 고르고 따로 풀 수 있어요.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary,
                         )
@@ -122,8 +122,11 @@ fun ArchiveReportDialog(
                                     },
                                 )
                                 if (isNested) {
+                                    val p = doctor.planOf(d)
                                     Text(
-                                        "→ " + namesOf(d).joinToString(", ") { "$it.zip" },
+                                        if (p.mode == ArchiveDoctor.Mode.MERGE)
+                                            "→ 한 파일로 합치기: ${p.fileName}.zip (폴더 ${d.inner.size}개)"
+                                        else "→ 각각 꺼내기: " + p.fileNames.joinToString(", ") { "$it.zip" },
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         maxLines = 3,
@@ -137,18 +140,18 @@ fun ArchiveReportDialog(
                     Spacer(Modifier.height(10.dp))
                     if (nested.isNotEmpty()) {
                         Text(
-                            "2중 압축은 안쪽 압축을 꺼내 일반 만화 파일로 바꿔요. 원본은 폴더 안 숨김 폴더(${ArchiveDoctor.ORIGINAL_DIR})에 보관돼요.",
+                            "원본은 폴더 안 숨김 폴더(${ArchiveDoctor.ORIGINAL_DIR})에 보관돼요.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Spacer(Modifier.height(6.dp))
                         if (nested.size > 1) {
                             OutlinedButton(onClick = { editing = 0 }, modifier = Modifier.fillMaxWidth()) {
-                                Text("하나씩 확인·이름 고치기")
+                                Text("하나씩 확인·고치기")
                             }
                         }
-                        OutlinedButton(onClick = { onUnnest(names.toMap(), null) }, modifier = Modifier.fillMaxWidth()) {
-                            Text(if (nested.size > 1) "2중 압축 전체 ${nested.size}개 풀기" else "2중 압축 풀기")
+                        OutlinedButton(onClick = { onUnnest(null) }, modifier = Modifier.fillMaxWidth()) {
+                            Text(if (nested.size > 1) "2중 압축 전체 ${nested.size}개 처리" else "2중 압축 처리")
                         }
                     }
                     if (broken.isNotEmpty()) {
@@ -170,28 +173,29 @@ fun ArchiveReportDialog(
     )
 }
 
-/** 2중 압축 하나: 안에 든 압축 목록 + 꺼낼 이름 고치기 + 바깥 이름 복사. */
+/** 2중 압축 하나: 안에 든 압축 목록 + 방식 고르기 + 이름 고치기 + 바깥 이름 복사 + 이 파일만 처리. */
 @Composable
 private fun NestedEditDialog(
     d: ArchiveDoctor.Diagnosis,
     index: Int,
     count: Int,
-    names: List<String>,
-    onNames: (List<String>) -> Unit,
+    plan: ArchiveDoctor.NestPlan,
+    onPlan: (ArchiveDoctor.NestPlan) -> Unit,
     onPrev: () -> Unit,
     onNext: () -> Unit,
     onBack: () -> Unit,
-    onUnnestOne: () -> Unit,
+    onRunThis: () -> Unit,
 ) {
     val clipboard = LocalClipboardManager.current
     val outerBase = ArchiveDoctor.baseName(d.entry.name)
     var copied by remember(d.entry.path) { mutableStateOf(false) }
-    val single = count == 1
+    val merge = plan.mode == ArchiveDoctor.Mode.MERGE
+    val defaults = ArchiveDoctor.defaultPlan(d)
     AlertDialog(
         onDismissRequest = onBack,
         title = {
             Text(
-                if (single) "2중 압축 확인" else "2중 압축 확인 (${index + 1}/$count)",
+                if (count == 1) "2중 압축 확인" else "2중 압축 확인 (${index + 1}/$count)",
                 style = MaterialTheme.typography.titleMedium,
             )
         },
@@ -199,7 +203,11 @@ private fun NestedEditDialog(
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 Text("바깥 압축파일", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(d.entry.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                Text(sizeText(d.entry.size), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    "${sizeText(d.entry.size)} · 안에 압축 ${d.inner.size}개",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Spacer(Modifier.height(6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     OutlinedButton(onClick = {
@@ -209,23 +217,61 @@ private fun NestedEditDialog(
                     if (d.inner.size > 1) {
                         Spacer(Modifier.width(6.dp))
                         OutlinedButton(onClick = {
-                            onNames(List(d.inner.size) { "$outerBase ${it + 1}" })
-                        }) { Text("이름+1,2,3") }
+                            val numbered = List(d.inner.size) { "$outerBase ${it + 1}" }
+                            onPlan(if (merge) plan.copy(folderNames = List(d.inner.size) { "${it + 1}" }) else plan.copy(fileNames = numbered))
+                        }) { Text(if (merge) "폴더 1,2,3" else "이름+1,2,3") }
                     }
                 }
                 if (copied) {
                     Text(
-                        "복사했어요. 아래 칸을 길게 눌러 붙여넣고 뒤에 번호를 붙이면 돼요.",
+                        "복사했어요. 칸을 길게 눌러 붙여넣고 뒤에 번호를 붙이면 돼요.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.primary,
                     )
                 }
+
+                // 방식 고르기
                 Spacer(Modifier.height(12.dp))
-                Text(
-                    "안에 든 압축 ${d.inner.size}개 → 꺼낼 이름",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                Text("처리 방식", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                ModeOption(
+                    selected = merge,
+                    title = "한 압축파일로 합치기 (폴더별)" + if (d.inner.size > 1) " · 기본" else "",
+                    desc = "압축파일은 하나 그대로, 안쪽 1·2·3이 폴더로 나뉘어 들어가요. 이어서 한 번에 볼 수 있어요.",
+                    onClick = { onPlan(plan.copy(mode = ArchiveDoctor.Mode.MERGE)) },
                 )
+                ModeOption(
+                    selected = !merge,
+                    title = "각각 압축파일로 꺼내기",
+                    desc = "안쪽 압축을 따로따로 파일로 꺼내요.",
+                    onClick = { onPlan(plan.copy(mode = ArchiveDoctor.Mode.SPLIT)) },
+                )
+
+                Spacer(Modifier.height(10.dp))
+                if (merge) {
+                    Text("합친 파일 이름", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    OutlinedTextField(
+                        value = plan.fileName,
+                        onValueChange = { onPlan(plan.copy(fileName = it.replace("\n", ""))) },
+                        singleLine = true,
+                        suffix = { Text(".zip") },
+                        placeholder = { Text(defaults.fileName) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "안쪽 압축 ${d.inner.size}개 → 폴더 이름",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    Text(
+                        "안쪽 압축 ${d.inner.size}개 → 꺼낼 파일 이름",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                val list = if (merge) plan.folderNames else plan.fileNames
+                val defList = if (merge) defaults.folderNames else defaults.fileNames
                 d.inner.forEachIndexed { i, inner ->
                     Spacer(Modifier.height(8.dp))
                     Text(
@@ -236,13 +282,14 @@ private fun NestedEditDialog(
                         overflow = TextOverflow.Ellipsis,
                     )
                     OutlinedTextField(
-                        value = names.getOrElse(i) { "" },
+                        value = list.getOrElse(i) { "" },
                         onValueChange = { v ->
-                            onNames(List(d.inner.size) { j -> if (j == i) v.replace("\n", "") else names.getOrElse(j) { "" } })
+                            val next = List(d.inner.size) { j -> if (j == i) v.replace("\n", "") else list.getOrElse(j) { "" } }
+                            onPlan(if (merge) plan.copy(folderNames = next) else plan.copy(fileNames = next))
                         },
                         singleLine = true,
-                        suffix = { Text(".zip") },
-                        placeholder = { Text(ArchiveDoctor.defaultNames(d)[i]) },
+                        suffix = { Text(if (merge) "/" else ".zip") },
+                        placeholder = { Text(defList.getOrElse(i) { "" }) },
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
@@ -252,22 +299,39 @@ private fun NestedEditDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                Spacer(Modifier.height(10.dp))
+                Button(onClick = onRunThis, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (merge) "이 파일만 지금 합치기" else "이 파일만 지금 꺼내기")
+                }
             }
         },
         confirmButton = {
-            if (single) {
-                TextButton(onClick = onUnnestOne) { Text("압축 풀기") }
-            } else {
-                TextButton(onClick = onNext) { Text(if (index + 1 < count) "다음" else "목록으로") }
-            }
+            if (count > 1) TextButton(onClick = onNext) { Text(if (index + 1 < count) "다음" else "목록으로") }
         },
         dismissButton = {
             Row {
-                if (!single && index > 0) TextButton(onClick = onPrev) { Text("이전") }
-                TextButton(onClick = onBack) { Text(if (single) "취소" else "목록") }
+                if (count > 1 && index > 0) TextButton(onClick = onPrev) { Text("이전") }
+                TextButton(onClick = onBack) { Text(if (count > 1) "목록" else "닫기") }
             }
         },
     )
+}
+
+@Composable
+private fun ModeOption(selected: Boolean, title: String, desc: String, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        RadioButton(selected = selected, onClick = onClick)
+        Column(Modifier.padding(top = 12.dp)) {
+            Text(title, style = MaterialTheme.typography.bodyMedium, fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal)
+            Text(desc, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
 }
 
 /** 검사·풀기·옮기기 진행 창. */
