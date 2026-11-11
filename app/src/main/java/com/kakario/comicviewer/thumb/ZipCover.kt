@@ -23,7 +23,7 @@ object ZipCover {
     private const val MAX_CEN_SIZE = 8 * 1024 * 1024
     private const val MAX_IMAGE_SIZE = 60 * 1024 * 1024
 
-    private val IMAGE_EXT = setOf("jpg", "jpeg", "png", "webp", "gif", "bmp")
+    private val IMAGE_EXT = setOf("jpg", "jpeg", "png", "webp", "gif", "bmp", "avif", "heic", "heif") // avif·heic: 안드로이드 12+ 기본 지원
 
     data class Entry(
         val name: String,
