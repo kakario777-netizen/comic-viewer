@@ -38,10 +38,11 @@ fun UpdateDialog(state: Updater.State, updater: Updater) {
             title = { Text("설치 준비 완료") },
             text = {
                 Column {
-                    Text("설치 화면에서 '업데이트'를 눌러 주세요.")
+                    Text("아래 '설치'를 누르면 앱 안에서 바로 업데이트돼요. 끝나면 앱이 잠깐 꺼졌다가 알림이 떠요 — 눌러서 다시 열면 돼요.")
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        "처음 한 번은 '이 출처 허용'을 켜야 할 수 있어요. 켠 뒤 돌아와서 아래 '설치'를 눌러 주세요.",
+                        "처음 한 번은 '이 출처 허용'을 켜고, 안드로이드가 '업데이트할까요?'를 한 번 물어봐요. 그다음부터는 묻지 않고 바로 업데이트돼요." +
+                            (updater.lastError?.let { "\n(지난 시도 오류: $it)" } ?: ""),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -49,6 +50,18 @@ fun UpdateDialog(state: Updater.State, updater: Updater) {
             },
             confirmButton = { TextButton(onClick = { updater.install(state.file) }) { Text("설치") } },
             dismissButton = { TextButton(onClick = { updater.dismiss() }) { Text("닫기") } },
+        )
+        Updater.State.Installing -> AlertDialog(
+            onDismissRequest = {},
+            title = { Text("업데이트 설치 중…") },
+            text = {
+                Column {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(8.dp))
+                    Text("끝나면 앱이 잠깐 꺼졌다가 '업데이트 완료' 알림이 떠요.", style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = {},
         )
         is Updater.State.UpToDate -> AlertDialog(
             onDismissRequest = { updater.dismiss() },

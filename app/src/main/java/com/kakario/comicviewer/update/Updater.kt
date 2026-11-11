@@ -1,11 +1,12 @@
 package com.kakario.comicviewer.update
 
 import android.content.Context
+import android.app.PendingIntent
 import android.content.Intent
+import android.content.pm.PackageInstaller
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
-import androidx.core.content.FileProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -34,6 +35,7 @@ class Updater private constructor(private val context: Context) {
         data class Available(val release: Release, val current: Int) : State
         data class Downloading(val release: Release, val percent: Int) : State
         data class Ready(val release: Release, val file: File) : State
+        data object Installing : State
         data class Failed(val message: String) : State
     }
 
@@ -108,7 +110,11 @@ class Updater private constructor(private val context: Context) {
         }
     }
 
-    /** 설치 화면 띄우기. '출처를 알 수 없는 앱' 허용이 안 돼 있으면 그 설정 화면부터. */
+    /**
+     * 앱 안에서 바로 설치 (PackageInstaller).
+     *  - 이 앱이 직접 설치한 적이 있으면(두 번째 업데이트부터) 안드로이드 12 이상에서는 묻지 않고 바로 업데이트.
+     *  - 처음 한 번은 안드로이드가 '업데이트할까요?'를 한 번 물어봄 (파일로 설치된 앱이라서).
+     */
     fun install(file: File) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !context.packageManager.canRequestPackageInstalls()) {
             context.startActivity(
@@ -117,12 +123,57 @@ class Updater private constructor(private val context: Context) {
             )
             return
         }
-        val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
-        context.startActivity(
-            Intent(Intent.ACTION_VIEW)
-                .setDataAndType(uri, "application/vnd.android.package-archive")
-                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-        )
+        val release = (state.value as? State.Ready)?.release
+        scope.launch {
+            try {
+                _state.value = State.Installing
+                val installer = context.packageManager.packageInstaller
+                val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
+                    setAppPackageName(context.packageName)
+                    setSize(file.length())
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
+                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                        setRequestUpdateOwnership(true)
+                    }
+                }
+                val id = installer.createSession(params)
+                installer.openSession(id).use { session ->
+                    file.inputStream().use { input ->
+                        session.openWrite("comic-viewer.apk", 0, file.length()).use { out ->
+                            input.copyTo(out, 256 * 1024)
+                            session.fsync(out)
+                        }
+                    }
+                    val flags = PendingIntent.FLAG_UPDATE_CURRENT or
+                        (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0)
+                    val pi = PendingIntent.getBroadcast(
+                        context, id,
+                        Intent(context, InstallReceiver::class.java).setPackage(context.packageName),
+                        flags,
+                    )
+                    session.commit(pi.intentSender)
+                }
+                // 성공하면 앱이 새 버전으로 바뀌면서 꺼짐 → 알림을 눌러 다시 열기
+            } catch (e: Exception) {
+                _state.value = if (release != null) State.Ready(release, file).also { lastError = e.message }
+                else State.Failed("설치하지 못했어요. (${e.message ?: e.javaClass.simpleName})")
+            }
+        }
+    }
+
+    internal var lastError: String? = null
+
+    /** 설치 결과 (InstallReceiver에서). */
+    internal fun onInstallResult(status: Int, message: String?) {
+        if (status == PackageInstaller.STATUS_SUCCESS) return
+        _state.value = State.Failed("설치하지 못했어요.\n${message ?: "코드 $status"}")
+    }
+
+    internal fun onUserAction() {
+        // 안드로이드가 확인 창을 띄움 — 우리 창은 닫아 둔다
+        _state.value = State.Idle
     }
 
     fun dismiss() {
