@@ -36,6 +36,14 @@ class ProgressStore private constructor(context: Context) {
         prefs.edit().putInt(key, page).putInt("$key#total", total).apply()
     }
 
+    /** 이름을 바꿨을 때 읽은 위치를 새 이름으로 옮긴다. */
+    fun move(from: String, to: String) {
+        if (from == to || !prefs.contains(from)) return
+        val p = get(from)
+        prefs.edit().remove(from).remove("$from#total").putInt(to, p.page).putInt("$to#total", p.total).apply()
+        version++
+    }
+
     fun clear(key: String) {
         prefs.edit().remove(key).remove("$key#total").apply()
         version++

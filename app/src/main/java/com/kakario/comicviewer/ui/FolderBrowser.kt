@@ -76,6 +76,15 @@ import com.kakario.comicviewer.model.folderName
 import com.kakario.comicviewer.thumb.ThumbOrigin
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import com.kakario.comicviewer.transfer.FileTransfer
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.Surface
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.foundation.border
 
 private sealed interface LoadState {
     data object Loading : LoadState
@@ -225,7 +234,14 @@ fun FolderBrowser(
         dup.scan(origin, path, folderName(path), list)
     }
 
-    BackHandler(onBack = onUp)
+    // ── 복사·이동·이름 바꾸기
+    val transfer = remember { FileTransfer.get(context) }
+    val clip by transfer.clip.collectAsState()
+    val transferState by transfer.state.collectAsState()
+    var selected by remember(path) { mutableStateOf<Set<String>?>(null) } // null = 선택 모드 아님
+    var renaming by remember { mutableStateOf<FileEntry?>(null) }
+
+    BackHandler(onBack = { if (selected != null) selected = null else onUp() })
 
     fun toast(msg: String) {
         scope.launch {
@@ -253,6 +269,13 @@ fun FolderBrowser(
     }
 
 
+    fun putClip(items: List<FileEntry>, move: Boolean) {
+        if (items.isEmpty()) return
+        transfer.setClip(FileTransfer.Clip(origin, path, items, move))
+        selected = null
+        toast("${items.size}개 ${if (move) "이동" else "복사"} 준비 — 옮길 폴더로 가서 아래 '여기에 붙여넣기'를 누르세요")
+    }
+
     fun toggle(p: String) {
         val wasOn = isFavorite(p)
         onToggleFavorite(p)
@@ -261,7 +284,18 @@ fun FolderBrowser(
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
-            BrowserHeader(
+            val sel = selected
+            if (sel != null) {
+                val all = loaded?.filter { it.isDirectory || it.isComicArchive }.orEmpty()
+                SelectionBar(
+                    count = sel.size,
+                    allSelected = all.isNotEmpty() && sel.size == all.size,
+                    onAll = { selected = if (sel.size == all.size) emptySet() else all.map { it.path }.toSet() },
+                    onCopy = { putClip(all.filter { it.path in sel }, move = false) },
+                    onMove = { putClip(all.filter { it.path in sel }, move = true) },
+                    onCancel = { selected = null },
+                )
+            } else BrowserHeader(
                 title = title,
                 // 파일·폴더 개수를 앞에, 경로는 뒤에 (길면 뒤가 잘림)
                 subtitle = loaded?.let { list ->
@@ -328,16 +362,24 @@ fun FolderBrowser(
                                 modifier = Modifier.fillMaxSize(),
                             ) {
                                 items(visible, key = { it.path }) { entry ->
+                                    val sel2 = selected
                                     ShelfTile(
                                         origin = origin,
                                         entry = entry,
                                         favorite = entry.isDirectory && isFavorite(entry.path),
                                         onToggleFavorite = { toggle(entry.path) },
+                                        selected = sel2?.contains(entry.path),
                                         onClick = {
-                                            if (entry.isDirectory) onOpenDir(entry.path)
-                                            else onOpenArchive(entry, bookOrder)
+                                            when {
+                                                sel2 != null -> selected =
+                                                    if (entry.path in sel2) sel2 - entry.path else sel2 + entry.path
+                                                entry.isDirectory -> onOpenDir(entry.path)
+                                                else -> onOpenArchive(entry, bookOrder)
+                                            }
                                         },
-                                        onLongClick = { menuFor = entry },
+                                        onLongClick = {
+                                            if (sel2 != null) selected = sel2 + entry.path else menuFor = entry
+                                        },
                                     )
                                 }
                             }
@@ -345,8 +387,57 @@ fun FolderBrowser(
                     }
                 }
             }
+            clip?.let { c ->
+                PasteBar(
+                    clip = c,
+                    onCancel = { transfer.setClip(null) },
+                    onPaste = { transfer.paste(origin, path) },
+                )
+            }
         }
-        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
+        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(bottom = if (clip != null) 72.dp else 0.dp))
+    }
+
+    // ── 복사·이동 진행 / 완료
+    when (val ts = transferState) {
+        is FileTransfer.State.Working -> TransferDialog(ts, onStop = { transfer.cancel() })
+        is FileTransfer.State.Done -> AlertDialog(
+            onDismissRequest = { transfer.clearDone(); reloadKey++ },
+            title = { Text("완료") },
+            text = { Text(ts.message) },
+            confirmButton = {
+                TextButton(onClick = { transfer.clearDone(); reloadKey++ }) { Text("확인") }
+            },
+        )
+        FileTransfer.State.Idle -> Unit
+    }
+
+    // ── 이름 바꾸기
+    renaming?.let { target ->
+        RenameDialog(
+            entry = target,
+            onDismiss = { renaming = null },
+            onConfirm = { newName ->
+                renaming = null
+                scope.launch {
+                    try {
+                        val newPath = transfer.rename(origin, target, newName)
+                        if (!target.isDirectory) {
+                            progressStore.move(
+                                progressStore.keyFor(origin, target),
+                                progressStore.keyFor(origin, target.copy(path = newPath)),
+                            )
+                        }
+                        toast("이름을 바꿨어요")
+                        reloadKey++
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        toast(e.message ?: "이름을 바꾸지 못했어요")
+                    }
+                }
+            },
+        )
     }
 
     // ── 정렬 창
@@ -534,6 +625,12 @@ fun FolderBrowser(
                         Spacer(Modifier.height(8.dp))
                         HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
                         Spacer(Modifier.height(4.dp))
+                        FileOpsMenu(
+                            onRename = { menuFor = null; renaming = target },
+                            onCopy = { menuFor = null; putClip(listOf(target), move = false) },
+                            onMove = { menuFor = null; putClip(listOf(target), move = true) },
+                            onSelect = { menuFor = null; selected = setOf(target.path) },
+                        )
                         MenuItem("표지 다시 만들기", icon = AppIcons.Image) {
                             menuFor = null
                             thumbs?.invalidate(origin, listOf(target))
@@ -564,6 +661,12 @@ fun FolderBrowser(
                             menuFor = null
                             checkArchives(target.path, target.name, null)
                         }
+                        FileOpsMenu(
+                            onRename = { menuFor = null; renaming = target },
+                            onCopy = { menuFor = null; putClip(listOf(target), move = false) },
+                            onMove = { menuFor = null; putClip(listOf(target), move = true) },
+                            onSelect = { menuFor = null; selected = setOf(target.path) },
+                        )
                         val fav = isFavorite(target.path)
                         MenuItem(if (fav) "즐겨찾기에서 빼기" else "즐겨찾기에 추가", icon = if (fav) AppIcons.FavoriteOn else AppIcons.Favorite) {
                             menuFor = null
@@ -689,6 +792,8 @@ private fun ShelfTile(
     entry: FileEntry,
     favorite: Boolean,
     onToggleFavorite: () -> Unit,
+    /** null = 선택 모드 아님 */
+    selected: Boolean? = null,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
 ) {
@@ -717,7 +822,31 @@ private fun ShelfTile(
                 ReadBadge(origin, entry, Modifier.align(Alignment.BottomCenter))
                 NewDot(origin, entry, Modifier.align(Alignment.TopEnd))
             }
-            if (entry.isDirectory) {
+            if (selected != null) {
+                Box(
+                    Modifier
+                        .matchParentSize()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.28f) else Color.Transparent)
+                        .then(
+                            if (selected) Modifier.border(3.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp))
+                            else Modifier
+                        )
+                )
+                Box(
+                    Modifier
+                        .align(Alignment.TopStart)
+                        .padding(6.dp)
+                        .size(26.dp)
+                        .clip(CircleShape)
+                        .background(if (selected) MaterialTheme.colorScheme.primary else Badge)
+                        .border(2.dp, Color.White, CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (selected) AppIcon(AppIcons.Checked, size = 22.dp, tint = Color.White)
+                }
+            }
+            if (entry.isDirectory && selected == null) {
                 Box(
                     Modifier
                         .align(Alignment.TopEnd)
@@ -950,5 +1079,141 @@ private fun SortDialog(
             }
         },
         confirmButton = { TextButton(onClick = onClose) { Text("닫기") } },
+    )
+}
+
+
+/** 길게 누르기 메뉴 공통: 이름 바꾸기·복사·이동·여러 개 선택. */
+@Composable
+private fun FileOpsMenu(onRename: () -> Unit, onCopy: () -> Unit, onMove: () -> Unit, onSelect: () -> Unit) {
+    MenuItem("이름 바꾸기", icon = AppIcons.Rename, onClick = onRename)
+    MenuItem("복사하기", icon = AppIcons.Copy, onClick = onCopy)
+    MenuItem("이동하기", icon = AppIcons.Move, onClick = onMove)
+    MenuItem("여러 개 선택하기 (복사·이동)", icon = AppIcons.Select, onClick = onSelect)
+}
+
+/** 선택 모드 상단 줄. */
+@Composable
+private fun SelectionBar(
+    count: Int,
+    allSelected: Boolean,
+    onAll: () -> Unit,
+    onCopy: () -> Unit,
+    onMove: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    Surface(color = MaterialTheme.colorScheme.primaryContainer) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TextButton(onClick = onCancel) { Text("취소") }
+            Text(
+                "${count}개 선택",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = onAll) { Text(if (allSelected) "선택 해제" else "전체") }
+            TextButton(onClick = onCopy, enabled = count > 0) { Text("복사") }
+            TextButton(onClick = onMove, enabled = count > 0) { Text("이동") }
+        }
+    }
+}
+
+/** 화면 아래 '여기에 붙여넣기' 창. */
+@Composable
+private fun PasteBar(clip: FileTransfer.Clip, onCancel: () -> Unit, onPaste: () -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.secondaryContainer, tonalElevation = 4.dp, shadowElevation = 6.dp) {
+        Row(
+            Modifier.fillMaxWidth().padding(start = 14.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                val first = clip.items.first().name
+                Text(
+                    if (clip.items.size == 1) first else "$first 외 ${clip.items.size - 1}개",
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+                Text(
+                    (if (clip.move) "이동" else "복사") + " 대기 · " +
+                        (if (clip.origin.server != null) "서버 '${clip.origin.server.name}'" else "내 폰") + "에서",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.75f),
+                )
+            }
+            TextButton(onClick = onCancel) { Text("취소") }
+            Button(onClick = onPaste) { Text("여기에 붙여넣기") }
+        }
+    }
+}
+
+/** 복사·이동 진행 창. */
+@Composable
+private fun TransferDialog(st: FileTransfer.State.Working, onStop: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = {},
+        title = { Text(st.title) },
+        text = {
+            Column {
+                val frac = if (st.bytesTotal > 0) (st.bytesDone.toFloat() / st.bytesTotal).coerceIn(0f, 1f)
+                else if (st.fileCount > 0) st.fileIndex.toFloat() / st.fileCount else 0f
+                LinearProgressIndicator(progress = { frac }, modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "${st.fileIndex} / ${st.fileCount}개 · ${formatBytes(st.bytesDone)} / ${formatBytes(st.bytesTotal)} (${(frac * 100).toInt()}%)",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    st.name,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "화면이 꺼져도 계속돼요. 앱을 완전히 닫으면 멈춰요.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onStop) { Text("중지", color = MaterialTheme.colorScheme.error) }
+        },
+    )
+}
+
+/** 이름 바꾸기 창 (파일은 확장자 앞부분만 선택된 채로 열림). */
+@Composable
+private fun RenameDialog(entry: FileEntry, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
+    val dot = entry.name.lastIndexOf('.')
+    val end = if (!entry.isDirectory && dot > 0) dot else entry.name.length
+    var value by remember(entry.path) { mutableStateOf(TextFieldValue(entry.name, TextRange(0, end))) }
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(entry.path) { runCatching { focus.requestFocus() } }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("이름 바꾸기") },
+        text = {
+            OutlinedTextField(
+                value = value,
+                onValueChange = { value = it.copy(text = it.text.replace("\n", "")) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().focusRequester(focus),
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(value.text) },
+                enabled = value.text.isNotBlank() && value.text != entry.name,
+            ) { Text("바꾸기") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
     )
 }

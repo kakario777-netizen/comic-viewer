@@ -39,7 +39,7 @@ class FtpBrowser(private val server: FtpServer) {
         homePath
     }
 
-    suspend fun list(path: String): List<FileEntry> = ftp {
+    suspend fun list(path: String, includeHidden: Boolean = false): List<FileEntry> = ftp {
         ensureConnected()
         if (!client.changeWorkingDirectory(path)) {
             throw UserFacingException("폴더를 열 수 없어요: $path")
@@ -52,7 +52,7 @@ class FtpBrowser(private val server: FtpServer) {
             )
         }
         files.filterNotNull()
-            .filter { it.name != "." && it.name != ".." && !it.name.startsWith(".") }
+            .filter { it.name != "." && it.name != ".." && (includeHidden || !it.name.startsWith(".")) }
             .map { f ->
                 FileEntry(
                     name = f.name,
@@ -166,6 +166,12 @@ class FtpBrowser(private val server: FtpServer) {
             }
             client.setRestartOffset(0)
         }
+    }
+
+    /** 빈 폴더 지우기. */
+    suspend fun removeDir(path: String): Boolean = ftp {
+        ensureConnected()
+        client.removeDirectory(path)
     }
 
     /** 서버에서 파일 하나를 지운다. */

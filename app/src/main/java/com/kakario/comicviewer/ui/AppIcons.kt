@@ -5,6 +5,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.outlined.CheckBox
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.ContentCut
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.ExpandLess
@@ -41,6 +46,11 @@ object AppIcons {
     val Done: ImageVector get() = Icons.Outlined.CheckCircle
     val Up: ImageVector get() = Icons.Outlined.ExpandLess
     val Down: ImageVector get() = Icons.Outlined.ExpandMore
+    val Copy: ImageVector get() = Icons.Outlined.ContentCopy
+    val Move: ImageVector get() = Icons.Outlined.ContentCut
+    val Rename: ImageVector get() = Icons.Outlined.Edit
+    val Select: ImageVector get() = Icons.Outlined.CheckBox
+    val Checked: ImageVector get() = Icons.Filled.CheckCircle
 }
 
 @Composable
