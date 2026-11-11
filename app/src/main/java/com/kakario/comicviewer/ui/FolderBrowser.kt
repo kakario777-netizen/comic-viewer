@@ -492,7 +492,7 @@ fun FolderBrowser(
                 if (report != null && comparing == null && !dupMenu) {
                     ArchiveReportDialog(
                         report = report,
-                        onUnnest = { doctor.fixNested(report) },
+                        onUnnest = { names, only -> doctor.fixNested(report, names, only) },
                         onMoveBroken = { doctor.moveBroken(report) },
                         onClose = {
                             doctor.dismiss(report.key)

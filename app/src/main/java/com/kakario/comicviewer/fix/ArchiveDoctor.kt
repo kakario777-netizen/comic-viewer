@@ -158,9 +158,14 @@ class ArchiveDoctor private constructor(context: Context) {
 
     // ───────────────────────── 고치기
 
-    /** 2중 압축 파일들을 풀어서 일반 만화 파일로 바꾼다. */
-    fun fixNested(report: Report) = runFix(report, "2중 압축 푸는 중", report.nested) { d, i, n ->
-        unnest(report.origin, report.path, d) { detail ->
+    /**
+     * 2중 압축 파일들을 풀어서 일반 만화 파일로 바꾼다.
+     * names: 바깥 파일 경로 → 꺼낼 파일 이름들(확장자 빼고, 안쪽 ZIP 순서대로). 없으면 기본 이름.
+     * only: 지정하면 그 파일들만 푼다.
+     */
+    fun fixNested(report: Report, names: Map<String, List<String>> = emptyMap(), only: Set<String>? = null) =
+        runFix(report, "2중 압축 푸는 중", report.nested.filter { only == null || it.entry.path in only }) { d, i, n ->
+        unnest(report.origin, report.path, d, names[d.entry.path]) { detail ->
             _state.value = State.Working(report.key, "2중 압축 푸는 중", i, n, "${d.entry.name}\n$detail")
         }
     }
@@ -219,16 +224,22 @@ class ArchiveDoctor private constructor(context: Context) {
      *  3) 원본은 .comicviewer_original 숨김 폴더로 옮기고, 임시 파일을 제 이름으로 바꾼다.
      * 안쪽 ZIP이 1개면 원래 파일 이름 그대로, 여러 개면 각자 이름으로 꺼낸다.
      */
-    private suspend fun unnest(origin: ThumbOrigin, folder: String, d: Diagnosis, progress: (String) -> Unit) {
-        val taken = list(origin, folder).map { it.name }.toMutableSet()
-        val targets = if (d.inner.size == 1) {
-            listOf(d.inner[0] to d.entry.name)
-        } else {
-            d.inner.map { inner ->
-                val n = uniqueName(inner.name.substringAfterLast('/'), taken)
-                taken += n
-                inner to n
-            }
+    private suspend fun unnest(
+        origin: ThumbOrigin,
+        folder: String,
+        d: Diagnosis,
+        names: List<String>?,
+        progress: (String) -> Unit,
+    ) {
+        // 원본은 숨김 폴더로 옮겨지니 원본 이름은 다시 써도 됨
+        val taken = list(origin, folder).map { it.name }.toMutableSet().apply { remove(d.entry.name) }
+        val defaults = defaultNames(d)
+        val targets = d.inner.mapIndexed { i, inner ->
+            val base = cleanName(names?.getOrNull(i)).ifEmpty { defaults[i] }
+            val ext = inner.name.substringAfterLast('.', "zip").lowercase().let { if (it in INNER_ZIP) it else "zip" }
+            val n = uniqueName("$base.$ext", taken)
+            taken += n
+            inner to n
         }
         val made = mutableListOf<Pair<String, String>>() // 임시 경로 → 최종 이름
         try {
@@ -382,6 +393,20 @@ class ArchiveDoctor private constructor(context: Context) {
         const val ERROR_DIR = "오류난 파일"
         private val INNER_ZIP = setOf("zip", "cbz")
         private val OTHER_ARCHIVE = setOf("rar", "cbr", "7z", "cb7", "alz", "egg", "tar", "gz")
+
+        /** 꺼낼 파일 기본 이름(확장자 빼고): 안쪽이 1개면 바깥 파일 이름, 여러 개면 안쪽 파일 이름. */
+        fun defaultNames(d: Diagnosis): List<String> =
+            if (d.inner.size == 1) listOf(baseName(d.entry.name))
+            else d.inner.map { baseName(it.name.substringAfterLast('/')) }
+
+        fun baseName(name: String) = name.substringBeforeLast('.', name)
+
+        /** 파일 이름에 못 쓰는 글자 정리. */
+        fun cleanName(name: String?): String =
+            (name ?: "").replace(Regex("[\\\\/:*?\"<>|\\n\\r]"), "_").trim().trimEnd('.').let {
+                val low = it.lowercase()
+                if (low.endsWith(".zip") || low.endsWith(".cbz")) it.dropLast(4).trim() else it
+            }
 
         fun uniqueName(name: String, taken: Set<String>): String {
             if (name !in taken) return name
