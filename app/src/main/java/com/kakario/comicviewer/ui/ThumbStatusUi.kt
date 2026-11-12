@@ -219,3 +219,38 @@ fun ThumbStatusPanel(
         }
     }
 }
+
+
+/** "썸네일·읽기 정보 서버 동기화 중 (123/850)" — 처음 한 번 올리는 동안만. */
+@Composable
+fun SyncStatusLine(st: com.kakario.comicviewer.sync.SyncManager.MigrateStatus?) {
+    AnimatedVisibility(
+        visible = st != null,
+        enter = expandVertically() + fadeIn(),
+        exit = shrinkVertically() + fadeOut(),
+    ) {
+        val s = st ?: return@AnimatedVisibility
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .padding(horizontal = 16.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(12.dp),
+                strokeWidth = 2.dp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                "썸네일·읽기 정보 서버 동기화 중 " +
+                    if (s.total != null) "(${s.done}/${s.total})" else "(준비 중 · 폴더 ${s.folders}개 확인)",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}

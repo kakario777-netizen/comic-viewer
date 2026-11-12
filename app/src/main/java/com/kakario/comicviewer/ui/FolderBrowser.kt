@@ -144,6 +144,11 @@ fun FolderBrowser(
     // ── 지금 보는 폴더만 자동으로 없는 표지를 채운다 (나가면 멈춤)
     val thumbs = LocalThumbnails.current
     val loaded = (state as? LoadState.Loaded)?.entries
+    // ── 서버 읽기 기록(.cvsync/progress.json)을 진행률·다 읽음 표시에 반영 (FTP만)
+    val sync = remember { com.kakario.comicviewer.sync.SyncManager.get(context) }
+    LaunchedEffect(origin, path, loaded) {
+        if (loaded != null && origin.server != null) sync.pullFolder(origin, path, loaded)
+    }
     DisposableEffect(thumbs, origin, path, loaded != null) {
         if (thumbs != null && loaded != null && loaded.any { it.isComicArchive }) {
             thumbs.watchFolder(origin, path, folderName(path), loaded)
@@ -744,6 +749,7 @@ fun FolderBrowser(
                         }
                     } else {
                         progressStore.clear(key)
+                        sync.flush(origin, c.entry) // 다른 기기에도 초기화 반영
                         toast("진행률을 초기화했어요")
                     }
                 }) {

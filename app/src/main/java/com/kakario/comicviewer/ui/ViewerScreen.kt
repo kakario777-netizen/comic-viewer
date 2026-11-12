@@ -138,10 +138,12 @@ fun ViewerScreen(
     }
     val progress = remember { ProgressStore.get(context) }
     val book = remember(origin, entry.path) { ComicBook(origin, entry, maxSide, prefs.connections) }
+    val sync = remember { com.kakario.comicviewer.sync.SyncManager.get(context) }
     DisposableEffect(book) {
         onDispose {
             book.close()
             progress.bump() // 책장 진행률 다시 그리기
+            sync.flush(origin, entry) // 닫을 때 서버에 한 번 더 저장
         }
     }
 
@@ -151,7 +153,11 @@ fun ViewerScreen(
     LaunchedEffect(book, retry) {
         openError = null
         try {
-            pageCount = book.open()
+            // 서버 기록이 더 최근이면 그 위치부터 (최대 4초 기다리고, 안 되면 폰 기록으로)
+            val pull = launch { kotlinx.coroutines.withTimeoutOrNull(4000) { sync.pullBook(origin, entry) } }
+            val n = book.open()
+            pull.join()
+            pageCount = n
         } catch (e: CancellationException) {
             throw e
         } catch (e: UserFacingException) {
@@ -206,6 +212,7 @@ fun ViewerScreen(
                 onPrefsChange = onPrefsChange,
                 onOpenNext = onOpenNext,
                 onClose = onClose,
+                onSaved = { sync.onPage(origin, entry) },
               )
             }
         }
@@ -235,6 +242,7 @@ private fun BookPager(
     onPrefsChange: (ViewerPrefs) -> Unit,
     onOpenNext: (FileEntry) -> Unit,
     onClose: () -> Unit,
+    onSaved: () -> Unit,
 ) {
     val context = LocalContext.current
     val progress = remember { ProgressStore.get(context) }
@@ -269,12 +277,14 @@ private fun BookPager(
                 currentPage = spreads[s].first()
                 val last = spreads[s].last()
                 progress.set(bookKey, last, pageCount)
+                onSaved()
                 // 바로 다음 화면은 그림까지 준비, 그 뒤 페이지들은 원본을 미리 받아둔다 (여러 연결로 동시에)
                 spreads.getOrNull(s + 1)?.forEach { book.prepare(it) }
                 for (i in last + 1..last + prefs.prefetchPages) book.prefetch(i)
                 spreads.getOrNull(s - 1)?.forEach { book.prefetch(it) }
             } else {
                 progress.set(bookKey, pageCount - 1, pageCount)
+                onSaved()
             }
         }
 

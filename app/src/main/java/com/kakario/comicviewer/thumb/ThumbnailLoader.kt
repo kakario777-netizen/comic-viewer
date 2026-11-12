@@ -13,6 +13,7 @@ import com.kakario.comicviewer.local.LocalStorage
 import com.kakario.comicviewer.model.FileEntry
 import com.kakario.comicviewer.model.RangeSource
 import kotlinx.coroutines.CoroutineScope
+import com.kakario.comicviewer.sync.SyncManager
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -71,6 +72,14 @@ class ThumbnailLoader private constructor(context: Context) {
 
     fun cached(key: String): Bitmap? = memory.get(key)
 
+    private val sync = SyncManager.get(context)
+
+    /** '표지 다시 만들기' — 서버 표지 대신 새로 만들어 서버 것도 덮어쓴다. */
+    private val forceRemake = ConcurrentHashMap<String, Boolean>()
+
+    /** 이 책 표지 캐시 파일 (서버 첫 올리기용). */
+    fun diskFile(origin: ThumbOrigin, entry: FileEntry): File = fileFor(keyFor(origin, entry))
+
     fun keyFor(origin: ThumbOrigin, entry: FileEntry): String =
         if (entry.isDirectory) "${origin.tag}:dir:${entry.path}"
         else "${origin.tag}:zip:${entry.path}:${entry.size}:${entry.modified}"
@@ -93,11 +102,26 @@ class ThumbnailLoader private constructor(context: Context) {
     }
 
     private suspend fun produce(key: String, origin: ThumbOrigin, entry: FileEntry): Bitmap? {
+        val server = origin.server
         val bmp = readDisk(key) ?: try {
-            // 폴더에는 표지를 만들지 않는다 (파일만)
-            val raw = if (entry.isDirectory) null else zipCover(origin, entry)
-            raw?.let { withContext(Dispatchers.Default) { makeThumb(it) } }
-                ?.also { writeDisk(key, it) }
+            // 서버(.cvsync)에 표지가 있으면 받아서 쓰고, 없을 때만 직접 만든다
+            val remote = if (server != null && !entry.isDirectory && forceRemake.remove(key) == null) {
+                sync.fetchCover(server, entry)
+            } else null
+            val fromServer = remote?.let { bytes ->
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.also {
+                    runCatching { fileFor(key).writeBytes(bytes) }
+                }
+            }
+            fromServer ?: run {
+                // 폴더에는 표지를 만들지 않는다 (파일만)
+                val raw = if (entry.isDirectory) null else zipCover(origin, entry)
+                raw?.let { withContext(Dispatchers.Default) { makeThumb(it) } }?.also { made ->
+                    val jpeg = withContext(Dispatchers.Default) { SyncManager.coverJpeg(made) }
+                    runCatching { fileFor(key).writeBytes(jpeg) }
+                    if (server != null) sync.uploadCoverLater(server, entry, jpeg) // 만들면 바로 서버에
+                }
+            }
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -347,6 +371,7 @@ class ThumbnailLoader private constructor(context: Context) {
             misses.remove(key)
             failed.remove(key)
             fileFor(key).delete()
+            if (origin.server != null && !e.isDirectory) forceRemake[key] = true
         }
         saveFailed()
         generation++
@@ -404,14 +429,18 @@ class ThumbnailLoader private constructor(context: Context) {
     private fun ftp(server: FtpServer): FtpBrowser =
         ftpConnections.getOrPut(server) { FtpBrowser(server) }
 
-    /** 원본 이미지를 책장 크기(가로 약 360px)로 줄인다. 메모리를 아끼려 RGB565로. */
+    /** 원본 이미지를 표지 크기(긴 변 360px, 컬러 그대로)로 줄인다 — 서버 공유 규칙과 같게. */
     private fun makeThumb(raw: ByteArray): Bitmap? {
-        val decoded = com.kakario.comicviewer.viewer.ImageCodec.decode(raw, TARGET_WIDTH * 2, Bitmap.Config.RGB_565)
-            ?: return null
-
-        if (decoded.width <= TARGET_WIDTH) return decoded
-        val h = (decoded.height.toLong() * TARGET_WIDTH / decoded.width).toInt().coerceAtLeast(1)
-        val scaled = Bitmap.createScaledBitmap(decoded, TARGET_WIDTH, h, true)
+        val decoded = com.kakario.comicviewer.viewer.ImageCodec.decode(raw, TARGET_WIDTH * 2) ?: return null
+        val longest = maxOf(decoded.width, decoded.height)
+        if (longest <= TARGET_WIDTH) return decoded
+        val k = TARGET_WIDTH.toFloat() / longest
+        val scaled = Bitmap.createScaledBitmap(
+            decoded,
+            (decoded.width * k).toInt().coerceAtLeast(1),
+            (decoded.height * k).toInt().coerceAtLeast(1),
+            true,
+        )
         if (scaled !== decoded) decoded.recycle()
         return scaled
     }

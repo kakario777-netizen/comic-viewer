@@ -51,6 +51,7 @@ import com.kakario.comicviewer.ui.OverlayHost
 import com.kakario.comicviewer.ui.LocalGridColumns
 import com.kakario.comicviewer.ui.ViewerScreen
 import com.kakario.comicviewer.ui.ThumbStatusBar
+import com.kakario.comicviewer.ui.SyncStatusLine
 import com.kakario.comicviewer.ui.ThumbStatusPanel
 import com.kakario.comicviewer.ui.ViewerPrefs
 import com.kakario.comicviewer.thumb.ThumbOrigin
@@ -145,6 +146,9 @@ class MainActivity : ComponentActivity() {
         // 앱 켤 때 새 버전 조용히 확인 (있을 때만 창이 뜸)
         val updater = Updater.get(applicationContext)
         if (savedInstanceState == null) updater.check(quiet = true)
+        // 업데이트 후 처음 한 번: 폰에 있던 표지·읽기 기록을 서버(.cvsync)에 올림 (끝나면 다시 안 함, 중간에 꺼도 이어서)
+        val sync = com.kakario.comicviewer.sync.SyncManager.get(applicationContext)
+        sync.startMigration { origin, entry -> thumbnails.diskFile(origin, entry) }
         // 썸네일 갱신이 끝난 폴더는 이어서 차례로: 중복 확인(중복 검사 폴더만) → 표지 안 나온 파일 압축 오류 확인
         thumbnails.onFolderDone = { origin, path, label, zips, failed ->
             val dup = DupScanner.get(applicationContext)
@@ -332,6 +336,9 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
                         }
+                        // 서버 동기화(처음 한 번 올리기) 중일 때만 보이는 한 줄
+                        val migrate by sync.migrate.collectAsState()
+                        SyncStatusLine(migrate)
                         // 썸네일 갱신 중일 때만 보이는 한 줄 (끝나면 사라짐). 누르면 상세 창
                         ThumbStatusBar(
                             status = thumbStatus,
