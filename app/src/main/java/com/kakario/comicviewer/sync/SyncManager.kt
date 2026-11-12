@@ -316,7 +316,7 @@ class SyncManager private constructor(private val context: Context) {
             }.isSuccess
             if (!ok) continue // 서버가 꺼져 있음 → 다음에 켤 때
             tasksFile.appendText(found.joinToString("") { it + "\n" })
-            crawledFile.appendText(s.id + "\n")
+            crawledFile.appendText("${s.id}\n")
             crawled += s.id.toString()
         }
 
