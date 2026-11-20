@@ -123,8 +123,10 @@ class SyncManager private constructor(private val context: Context) {
         if (rec == null || rec.optLong("size", -1) != size) return false
         if (rec.optString("unit", "page") != "page") return false
         val time = rec.optLong("time", 0)
-        if (time <= progress.time(key)) return false
         val total = rec.optInt("total", 0)
+        // 폰에 이 책 기록이 아예 없으면(폴더를 옮겨 경로가 바뀐 경우 등) 시각이 0인 예전 기록이라도 받는다
+        val localEmpty = progress.time(key) <= 0L && !progress.get(key).started
+        if (!(time > progress.time(key) || (localEmpty && total > 0))) return false
         var pos = rec.optInt("pos", 0)
         if (rec.optBoolean("done", false) && total > 0) pos = total - 1
         progress.setRemote(key, pos.coerceIn(0, maxOf(0, total - 1)), total, time)
