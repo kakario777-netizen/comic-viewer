@@ -18,12 +18,16 @@ android {
     }
 
     signingConfigs {
-        // 저장소에 들어 있는 고정 디버그 키 — 빌드마다 서명이 바뀌어 재설치가 필요해지는 문제 방지
+        // 서명 키는 저장소에 두지 않고 GitHub Secrets에서 받는다 (빌드할 때 임시 파일로 풀어서 사용)
+        // 같은 키를 계속 써야 업데이트가 덮어써진다
         getByName("debug") {
-            storeFile = file("debug.keystore")
-            storePassword = "android"
-            keyAlias = "androiddebugkey"
-            keyPassword = "android"
+            val ks = System.getenv("CV_KEYSTORE_PATH")
+            if (!ks.isNullOrBlank()) {
+                storeFile = file(ks)
+                storePassword = System.getenv("CV_KEYSTORE_PASSWORD")
+                keyAlias = "androiddebugkey"
+                keyPassword = System.getenv("CV_KEYSTORE_PASSWORD")
+            }
         }
     }
 

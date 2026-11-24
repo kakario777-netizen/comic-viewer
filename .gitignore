@@ -9,4 +9,6 @@
 .externalNativeBuild/
 .cxx/
 *.apk
-!app/debug.keystore
+# 서명 키는 저장소에 올리지 않음 (GitHub Secrets 사용)
+*.keystore
+*.jks

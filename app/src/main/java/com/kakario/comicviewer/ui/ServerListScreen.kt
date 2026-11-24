@@ -194,6 +194,7 @@ private fun ServerDialog(
     var user by remember { mutableStateOf(initial.user) }
     var password by remember { mutableStateOf(initial.password) }
     var encoding by remember { mutableStateOf(initial.encoding) }
+    var secure by remember { mutableStateOf(initial.secure) }
 
     val canSave = host.isNotBlank() && (port.toIntOrNull() ?: 0) in 1..65535
 
@@ -236,6 +237,20 @@ private fun ServerDialog(
                 )
                 EncodingOption("UTF-8 (기본)", selected = encoding == "UTF-8") { encoding = "UTF-8" }
                 EncodingOption("EUC-KR (한글이 깨질 때)", selected = encoding == "EUC-KR") { encoding = "EUC-KR" }
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("보안 연결 (FTPS)", style = MaterialTheme.typography.labelLarge)
+                        Text(
+                            "서버에서 FTPS(TLS)를 켜 둔 경우만. 비밀번호·파일이 암호화돼 오가요.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    androidx.compose.material3.Switch(checked = secure, onCheckedChange = { secure = it })
+                }
             }
         },
         confirmButton = {
@@ -251,6 +266,7 @@ private fun ServerDialog(
                             user = user.trim(),
                             password = password,
                             encoding = encoding,
+                            secure = secure,
                         )
                     )
                 },

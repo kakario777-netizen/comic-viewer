@@ -188,7 +188,9 @@ class Updater private constructor(private val context: Context) {
         val assets = json.optJSONArray("assets") ?: return null
         for (i in 0 until assets.length()) {
             val a = assets.getJSONObject(i)
-            if (a.optString("name").endsWith(".apk")) {
+            if (a.optString("name").endsWith(".apk") &&
+                a.optString("browser_download_url").startsWith("https://github.com/kakario777-netizen/comic-viewer/releases/")
+            ) {
                 return Release(build, a.getString("browser_download_url"), a.optLong("size"))
             }
         }
@@ -196,7 +198,12 @@ class Updater private constructor(private val context: Context) {
     }
 
     private fun open(url: String): HttpURLConnection {
-        val conn = URL(url).openConnection() as HttpURLConnection
+        // 내 저장소(GitHub)에서 HTTPS로만 받는다 — 다른 주소는 거부
+        val u = URL(url)
+        if (u.protocol != "https" || !TRUSTED_HOSTS.any { u.host == it || u.host.endsWith(".$it") }) {
+            throw IllegalStateException("허용되지 않은 업데이트 주소예요")
+        }
+        val conn = u.openConnection() as HttpURLConnection
         conn.connectTimeout = 15_000
         conn.readTimeout = 30_000
         conn.instanceFollowRedirects = true
@@ -213,6 +220,7 @@ class Updater private constructor(private val context: Context) {
     }
 
     companion object {
+        private val TRUSTED_HOSTS = listOf("api.github.com", "github.com", "githubusercontent.com")
         private const val API = "https://api.github.com/repos/kakario777-netizen/comic-viewer/releases/tags/latest"
 
         @Volatile private var instance: Updater? = null

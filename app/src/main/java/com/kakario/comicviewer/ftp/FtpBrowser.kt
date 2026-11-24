@@ -12,6 +12,8 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.apache.commons.net.ftp.FTP
 import org.apache.commons.net.ftp.FTPClient
+import org.apache.commons.net.ftp.FTPSClient
+import org.apache.commons.net.util.TrustManagerUtils
 import org.apache.commons.net.ftp.FTPReply
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -27,7 +29,11 @@ import java.time.Duration
  * 끊겼으면 다음 요청 때 자동으로 다시 접속한다.
  */
 class FtpBrowser(private val server: FtpServer) {
-    private val client = FTPClient()
+    // 보안 연결(FTPS, 명시적 TLS)을 켜면 비밀번호·파일이 암호화돼 오간다
+    private val client: FTPClient = if (server.secure) FTPSClient(false).apply {
+        // NAS는 보통 자체 서명 인증서라 인증서 검사는 하지 않음 (내용 암호화는 그대로)
+        trustManager = TrustManagerUtils.getAcceptAllTrustManager()
+    } else FTPClient()
     private val mutex = Mutex()
 
     /** 접속 직후 서버가 알려준 시작 폴더. */
@@ -257,6 +263,10 @@ class FtpBrowser(private val server: FtpServer) {
         if (!client.login(user, pass)) {
             dropConnection()
             throw UserFacingException("로그인에 실패했어요. 아이디와 비밀번호를 확인해 주세요.")
+        }
+        (client as? FTPSClient)?.let {
+            it.execPBSZ(0)
+            it.execPROT("P") // 파일 내용도 암호화
         }
         if (server.encoding.equals("UTF-8", ignoreCase = true)) {
             // 지원하지 않는 서버는 그냥 무시하므로 보내도 안전하다.

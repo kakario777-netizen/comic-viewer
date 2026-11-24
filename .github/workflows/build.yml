@@ -14,6 +14,8 @@ concurrency:
 
 jobs:
   build:
+    # 내 저장소에서만 (포크·외부 풀 리퀘스트로는 실행 안 됨 — pull_request 트리거도 없음)
+    if: github.repository == 'kakario777-netizen/comic-viewer'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,12 +25,29 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v4   # 빌드 캐시 포함
         with:
           gradle-version: 8.11.1
 
+      - name: Restore signing key (from Secrets)
+        env:
+          KEYSTORE_B64: ${{ secrets.CV_KEYSTORE_B64 }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "::error::서명 키 Secret(CV_KEYSTORE_B64)이 없어요 — 저장소 Settings > Secrets에 추가해 주세요"
+            exit 1
+          fi
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/signing.keystore"
+          echo "CV_KEYSTORE_PATH=$RUNNER_TEMP/signing.keystore" >> "$GITHUB_ENV"
+
       - name: Build debug APK
+        env:
+          CV_KEYSTORE_PASSWORD: ${{ secrets.CV_KEYSTORE_PASSWORD }}
         run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Remove signing key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/signing.keystore"
 
       - name: Rename APK
         run: cp app/build/outputs/apk/debug/app-debug.apk comic-viewer.apk
