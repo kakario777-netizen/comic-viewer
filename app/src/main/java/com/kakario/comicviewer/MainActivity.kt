@@ -21,7 +21,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import android.view.KeyEvent
 import com.kakario.comicviewer.viewer.PageKeys
-import androidx.activity.ComponentActivity
+import androidx.fragment.app.FragmentActivity
+import com.kakario.comicviewer.privacy.PrivateMode
+import com.kakario.comicviewer.ui.PrivateModeDialogs
 import androidx.activity.compose.setContent
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
@@ -132,10 +134,16 @@ private const val TAB_FAVORITES = 0
 private const val TAB_FTP = 1
 private const val TAB_LOCAL = 2
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() { // 지문 창(BiometricPrompt) 때문에 FragmentActivity
     private lateinit var thumbnails: ThumbnailLoader
 
     @OptIn(DelicateCoroutinesApi::class)
+    override fun onStop() {
+        super.onStop()
+        // 앱을 나가거나 화면이 꺼지면 개인모드 자동 잠금 (회전·접기 때는 화면을 다시 안 만들어서 영향 없음)
+        if (!isChangingConfigurations) PrivateMode.get(applicationContext).lock()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
@@ -209,6 +217,13 @@ class MainActivity : ComponentActivity() {
                 LocalOverlayHost provides overlayHost,
               ) {
                 var settingsOpen by remember { mutableStateOf(false) }
+                val privateMode = remember { PrivateMode.get(applicationContext) }
+                val privateOn by privateMode.unlocked.collectAsState()
+                val hiddenSet by privateMode.hidden.collectAsState()
+                var privateDialog by remember { mutableStateOf(false) }
+                if (privateDialog) {
+                    PrivateModeDialogs(this@MainActivity, privateMode, privateOn, onDismiss = { privateDialog = false })
+                }
                 // 지금 보고 있는 만화책 (null이면 뷰어 닫힘)
                 var openBook by remember { mutableStateOf<OpenBook?>(null) }
                 // 만화를 보는 동안엔 폴더 표지 미리 만들기를 멈춰 보는 쪽에 속도를 양보
@@ -310,23 +325,29 @@ class MainActivity : ComponentActivity() {
                                     Tab(
                                         selected = tab == i,
                                         onClick = { tab = i },
-                                        text = {
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                AppIcon(
-                                                    when (i) {
-                                                        TAB_FAVORITES -> AppIcons.Favorite
-                                                        TAB_FTP -> AppIcons.Server
-                                                        else -> AppIcons.Phone
-                                                    },
-                                                    size = 18.dp,
-                                                )
-                                                Spacer(Modifier.width(6.dp))
-                                                Text(label, maxLines = 1)
-                                            }
+                                        // 글자 없이 아이콘만 (즐겨찾기 · FTP · 내 폰)
+                                        icon = {
+                                            AppIcon(
+                                                when (i) {
+                                                    TAB_FAVORITES -> AppIcons.Favorite
+                                                    TAB_FTP -> AppIcons.Server
+                                                    else -> AppIcons.Phone
+                                                },
+                                                size = 22.dp,
+                                            )
                                         },
                                         unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
+                            }
+                            // 개인모드: 켜면 숨긴 폴더·파일이 보임 (비밀번호 4~8자리 / 지문)
+                            IconButton(onClick = { privateDialog = true }) {
+                                AppIcon(
+                                    if (privateOn) AppIcons.LockOpen else AppIcons.Lock,
+                                    size = 22.dp,
+                                    tint = if (privateOn) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
                             }
                             IconButton(onClick = { settingsOpen = true }) {
                                 Icon(
@@ -351,7 +372,10 @@ class MainActivity : ComponentActivity() {
                     Box(Modifier.padding(padding).fillMaxSize()) {
                         when (tab) {
                             TAB_FAVORITES -> FavoritesScreen(
-                                favorites = favorites,
+                                favorites = if (privateOn || hiddenSet.isEmpty()) favorites
+                                else favorites.filter { f ->
+                                    !privateMode.isHidden(f.serverId?.let { "ftp$it" } ?: "local", f.path)
+                                },
                                 servers = servers,
                                 onOpen = { fav ->
                                     if (fav.isLocal) {

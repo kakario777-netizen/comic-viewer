@@ -81,6 +81,8 @@ import com.kakario.comicviewer.thumb.ThumbOrigin
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import com.kakario.comicviewer.transfer.FileTransfer
+import com.kakario.comicviewer.privacy.PrivateMode
+import androidx.compose.ui.draw.alpha
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Surface
@@ -249,6 +251,10 @@ fun FolderBrowser(
     val transferState by transfer.state.collectAsState()
     var selected by remember(path) { mutableStateOf<Set<String>?>(null) } // null = 선택 모드 아님
     var renaming by remember { mutableStateOf<FileEntry?>(null) }
+    // ── 개인모드: 숨긴 항목은 개인모드를 켰을 때만 보임
+    val privateMode = remember { PrivateMode.get(context) }
+    val privateOn by privateMode.unlocked.collectAsState()
+    val hiddenSet by privateMode.hidden.collectAsState()
 
     BackHandler(onBack = { if (selected != null) selected = null else onUp() })
 
@@ -256,6 +262,24 @@ fun FolderBrowser(
         scope.launch {
             snackbar.currentSnackbarData?.dismiss()
             snackbar.showSnackbar(msg)
+        }
+    }
+
+    @Composable
+    fun HideMenuItem(target: FileEntry, close: () -> Unit) {
+        val exact = hiddenSet.contains(privateMode.key(origin.tag, target.path))
+        MenuItem(if (exact) "숨김 풀기 (개인모드)" else "숨기기 (개인모드)", icon = if (exact) AppIcons.Visible else AppIcons.Hidden) {
+            close()
+            if (exact) {
+                privateMode.unhide(origin.tag, target.path)
+                toast("숨김을 풀었어요")
+            } else {
+                privateMode.hide(origin.tag, target.path)
+                toast(
+                    if (!privateMode.hasPin) "숨겼어요 — 위쪽 자물쇠에서 개인모드 비밀번호를 정하면 그때 다시 볼 수 있어요"
+                    else "숨겼어요 — 개인모드를 켰을 때만 보여요"
+                )
+            }
         }
     }
 
@@ -302,6 +326,10 @@ fun FolderBrowser(
                     onAll = { selected = if (sel.size == all.size) emptySet() else all.map { it.path }.toSet() },
                     onCopy = { putClip(all.filter { it.path in sel }, move = false) },
                     onMove = { putClip(all.filter { it.path in sel }, move = true) },
+                    onDelete = {
+                        val items = all.filter { it.path in sel }
+                        if (items.isNotEmpty()) confirm = Confirm(items, ConfirmAction.DELETE, 1)
+                    },
                     onCancel = { selected = null },
                 )
             } else BrowserHeader(
@@ -351,7 +379,10 @@ fun FolderBrowser(
                     )
 
                     is LoadState.Loaded -> {
-                        val visible = s.entries.filter { it.isDirectory || it.isComicArchive }
+                        val visible = s.entries.filter {
+                            (it.isDirectory || it.isComicArchive) &&
+                                !(!privateOn && hiddenSet.isNotEmpty() && privateMode.isHidden(origin.tag, it.path))
+                        }
                             .sortedForShelf(sortKey, sortAsc, foldersFirst)
                         // '다음 권'은 정렬과 상관없이 이름순(1권 → 2권)으로
                         val bookOrder = s.entries.filter { it.isComicArchive }.sortedWith { a, b -> NaturalOrder.compare(a.name, b.name) }
@@ -376,6 +407,8 @@ fun FolderBrowser(
                                     val sel2 = selected
                                     val mark = series[entry.path]
                                     ShelfTile(
+                                        modifier = if (privateOn && privateMode.isHidden(origin.tag, entry.path))
+                                            Modifier.alpha(0.55f) else Modifier,
                                         origin = origin,
                                         entry = entry,
                                         favorite = entry.isDirectory && isFavorite(entry.path),
@@ -668,6 +701,7 @@ fun FolderBrowser(
                             menuFor = null
                             confirm = Confirm(target, ConfirmAction.RESET, 1)
                         }
+                        HideMenuItem(target) { menuFor = null }
                         MenuItem("파일 삭제", icon = AppIcons.Delete, color = MaterialTheme.colorScheme.error) {
                             menuFor = null
                             confirm = Confirm(target, ConfirmAction.DELETE, 1)
@@ -696,6 +730,11 @@ fun FolderBrowser(
                             menuFor = null
                             toggle(target.path)
                         }
+                        HideMenuItem(target) { menuFor = null }
+                        MenuItem("폴더 삭제", icon = AppIcons.Delete, color = MaterialTheme.colorScheme.error) {
+                            menuFor = null
+                            confirm = Confirm(target, ConfirmAction.DELETE, 1)
+                        }
                     }
                 }
             },
@@ -707,15 +746,21 @@ fun FolderBrowser(
     // ── 두 번 확인
     confirm?.let { c ->
         val isDelete = c.action == ConfirmAction.DELETE
+        val many = c.entries.size > 1
+        val hasDir = c.entries.any { it.isDirectory }
+        val what = when { many -> "${c.entries.size}개 항목"; hasDir -> "폴더"; else -> "파일" }
         val title = when {
-            isDelete && c.step == 1 -> "파일을 삭제할까요?"
+            isDelete && c.step == 1 -> "${what}을 삭제할까요?"
             isDelete -> "정말 삭제할까요?"
             c.step == 1 -> "진행률을 초기화할까요?"
             else -> "정말 초기화할까요?"
         }
         val body = when {
-            isDelete && c.step == 1 -> "'${c.entry.name}'\n파일을 ${if (origin.server != null) "서버" else "폰"}에서 지워요."
-            isDelete -> "삭제한 파일은 되돌릴 수 없어요."
+            isDelete && c.step == 1 -> (if (many) c.entries.take(5).joinToString("\n") { "'${it.name}'" } +
+                (if (c.entries.size > 5) "\n외 ${c.entries.size - 5}개" else "") else "'${c.entry.name}'") +
+                "\n${if (origin.server != null) "서버" else "폰"}에서 지워요." +
+                (if (hasDir) "\n폴더는 안에 든 파일까지 모두 지워져요." else "")
+            isDelete -> "삭제한 ${if (hasDir) "폴더·파일" else "파일"}은 되돌릴 수 없어요."
             c.step == 1 -> "'${c.entry.name}'\n읽은 위치 기록을 지우고 처음부터 보게 돼요."
             else -> "읽던 페이지 기록이 사라져요."
         }
@@ -732,20 +777,29 @@ fun FolderBrowser(
                     confirm = null
                     val key = progressStore.keyFor(origin, c.entry)
                     if (isDelete) {
+                        selected = null
                         scope.launch {
-                            try {
-                                currentDelete(c.entry)
-                                progressStore.clear(key)
-                                toast("삭제했어요")
-                                removeLocally(c.entry.name)
-                                scope.launch { runCatching { dup.forget(origin, path, c.entry.name) } }
-                            } catch (e: CancellationException) {
-                                throw e
-                            } catch (e: UserFacingException) {
-                                toast(e.message ?: "삭제하지 못했어요")
-                            } catch (e: Exception) {
-                                toast("삭제하지 못했어요: ${e.message ?: e.javaClass.simpleName}")
+                            var done = 0
+                            var lastError: String? = null
+                            for (e in c.entries) {
+                                try {
+                                    if (e.isDirectory) transfer.deleteTree(origin, e) else currentDelete(e)
+                                    if (!e.isDirectory) progressStore.clear(progressStore.keyFor(origin, e))
+                                    removeLocally(e.name)
+                                    done++
+                                    if (!e.isDirectory) scope.launch { runCatching { dup.forget(origin, path, e.name) } }
+                                } catch (ex: CancellationException) {
+                                    throw ex
+                                } catch (ex: UserFacingException) {
+                                    lastError = ex.message
+                                } catch (ex: Exception) {
+                                    lastError = ex.message ?: ex.javaClass.simpleName
+                                }
                             }
+                            toast(
+                                if (lastError == null) "삭제했어요" + if (many) " (${done}개)" else ""
+                                else "${done}개 삭제, ${c.entries.size - done}개 실패: $lastError"
+                            )
                         }
                     } else {
                         progressStore.clear(key)
@@ -784,7 +838,10 @@ private fun formatBytes(bytes: Long): String = when {
 }
 
 private enum class ConfirmAction { DELETE, RESET }
-private data class Confirm(val entry: FileEntry, val action: ConfirmAction, val step: Int)
+private data class Confirm(val entries: List<FileEntry>, val action: ConfirmAction, val step: Int) {
+    constructor(entry: FileEntry, action: ConfirmAction, step: Int) : this(listOf(entry), action, step)
+    val entry: FileEntry get() = entries.first()
+}
 
 @Composable
 private fun MenuItem(
@@ -813,6 +870,7 @@ private fun MenuItem(
 /** 책장의 한 칸: 표지 + 이름. 폴더는 폴더 아이콘과 오른쪽 위 즐겨찾기 별. */
 @Composable
 private fun ShelfTile(
+    modifier: Modifier = Modifier,
     origin: ThumbOrigin,
     entry: FileEntry,
     favorite: Boolean,
@@ -825,7 +883,7 @@ private fun ShelfTile(
 ) {
     Column(
         // 시리즈 띠가 옆 칸까지 이어져야 해서 여기서는 자르지 않음
-        Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)
+        modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)
     ) {
         Box {
             val tileModifier = Modifier
@@ -1129,6 +1187,7 @@ private fun SelectionBar(
     onAll: () -> Unit,
     onCopy: () -> Unit,
     onMove: () -> Unit,
+    onDelete: () -> Unit,
     onCancel: () -> Unit,
 ) {
     Surface(color = MaterialTheme.colorScheme.primaryContainer) {
@@ -1146,6 +1205,7 @@ private fun SelectionBar(
             TextButton(onClick = onAll) { Text(if (allSelected) "선택 해제" else "전체") }
             TextButton(onClick = onCopy, enabled = count > 0) { Text("복사") }
             TextButton(onClick = onMove, enabled = count > 0) { Text("이동") }
+            TextButton(onClick = onDelete, enabled = count > 0) { Text("삭제", color = MaterialTheme.colorScheme.error) }
         }
     }
 }

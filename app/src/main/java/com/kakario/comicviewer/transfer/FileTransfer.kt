@@ -227,6 +227,9 @@ class FileTransfer private constructor(private val context: Context) {
         if (job?.isActive == false) throw kotlinx.coroutines.CancellationException()
     }
 
+    /** 폴더째(안의 숨김 파일까지) 지우기. */
+    suspend fun deleteTree(origin: ThumbOrigin, item: FileEntry) = deleteAny(origin, item)
+
     private suspend fun deleteAny(origin: ThumbOrigin, item: FileEntry) {
         if (item.isDirectory) {
             for (child in list(origin, item.path, hidden = true)) deleteAny(origin, child)

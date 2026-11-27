@@ -8,6 +8,11 @@ import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.outlined.CheckBox
 import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
+import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.LockOpen
+import androidx.compose.material.icons.outlined.Fingerprint
 import androidx.compose.material.icons.outlined.ContentCut
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.DeleteOutline
@@ -47,6 +52,11 @@ object AppIcons {
     val Up: ImageVector get() = Icons.Outlined.ExpandLess
     val Down: ImageVector get() = Icons.Outlined.ExpandMore
     val Copy: ImageVector get() = Icons.Outlined.ContentCopy
+    val Hidden: ImageVector get() = Icons.Outlined.VisibilityOff
+    val Visible: ImageVector get() = Icons.Outlined.Visibility
+    val Lock: ImageVector get() = Icons.Outlined.Lock
+    val LockOpen: ImageVector get() = Icons.Outlined.LockOpen
+    val Fingerprint: ImageVector get() = Icons.Outlined.Fingerprint
     val Move: ImageVector get() = Icons.Outlined.ContentCut
     val Rename: ImageVector get() = Icons.Outlined.Edit
     val Select: ImageVector get() = Icons.Outlined.CheckBox
